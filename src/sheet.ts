@@ -70,8 +70,8 @@ function path(ctx: CanvasRenderingContext2D, pts: Pt[], size: number): void {
   });
 }
 
-/** Parks, woods, water, railways, and building footprints when the mode prints them. */
-function drawContext(ctx: CanvasRenderingContext2D, size: number, map: MapData, mode: Mode): void {
+/** Parks, woods, water, railways, and building footprints when asked for. */
+function drawContext(ctx: CanvasRenderingContext2D, size: number, map: MapData, buildings: boolean): void {
   const u = unit(size);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -81,7 +81,7 @@ function drawContext(ctx: CanvasRenderingContext2D, size: number, map: MapData, 
   for (const w of map.woods) fillPolygon(ctx, w, size);
   ctx.fillStyle = INK.water;
   for (const w of map.waterAreas) fillPolygon(ctx, w, size);
-  if (mode === 'buildings') {
+  if (buildings) {
     ctx.fillStyle = INK.building;
     for (const b of map.buildings) fillPolygon(ctx, b, size);
   }
@@ -321,7 +321,7 @@ export function drawBase(
 ): void {
   drawPaper(ctx, size);
   if (map) {
-    drawContext(ctx, size, map, mode);
+    drawContext(ctx, size, map, mode === 'buildings');
     if (printedFor(mode) === 'major') drawHintRoads(ctx, size, map);
     drawPrintedStreets(ctx, size, printed);
     drawLandmarks(ctx, size, map);
@@ -367,7 +367,8 @@ export function drawResult(
 ): void {
   const u = unit(size);
   drawPaper(ctx, size);
-  drawContext(ctx, size, map, mode);
+  // Every level reveals the buildings, so each street sits in its blocks.
+  drawContext(ctx, size, map, true);
   // Under the result ink, so their paper halos don't cut through it.
   drawLandmarks(ctx, size, map);
   ctx.lineCap = 'round';

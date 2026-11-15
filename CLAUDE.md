@@ -78,7 +78,8 @@ and railways.
 names and all. `alleys` (Side streets) prints every street that isn't key instead, so the player
 draws the key streets between them; only scoring knows which those are, so `main.ts` gets them
 from `scoreDrawing(..., 'alleys').printed` when the round starts. `printedFor` maps a level to what
-`scoreDrawing` treats as printed. `buildings` adds building footprints to `roads`. There used to be a "Blank sheet" level with only
+`scoreDrawing` treats as printed. `buildings` adds building footprints to `roads`. The reveal (and the share card, which draws it)
+shows the buildings on every level. There used to be a "Blank sheet" level with only
 the pin; a player found it impossible, which is why landmarks are on every level.
 
 ### Scoring has been attacked, and hardened against it

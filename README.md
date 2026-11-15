@@ -19,6 +19,8 @@ hospitals, parks, schools and so on), plus parks, woods, rivers and railways.
   them. The printed streets are left out of the score.
 - **Buildings**: main roads plus every building footprint, so the streets show as gaps.
 
+Whatever the level, the reveal shows every building, so each street sits in its blocks.
+
 ## Scoring
 
 You're asked for the key streets: through roads (tertiary up to trunk), and streets with a name
