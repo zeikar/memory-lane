@@ -10,7 +10,7 @@ const MAT_INK = '#e9f0e6';
 const MAT_SOFT = '#a9c2b2';
 
 const MODE_NAME: Record<Mode, string> = {
-  blank: 'Blank sheet',
+  landmarks: 'Landmarks given',
   roads: 'Main roads given',
   buildings: 'Buildings given',
 };

@@ -2,19 +2,16 @@ import './style.css';
 import { makeCard, pct } from './card';
 import { HALF, type Pt, dist, distToSegment, makeProjection as project } from './geo';
 import { type MapData, type Place, fetchMap, reversePlace, searchPlaces } from './osm';
-import { type ScoreResult, scoreDrawing, verdict } from './score';
+import { MIN_STREET_LENGTH, type ScoreResult, scoreDrawing, verdict } from './score';
 import { type Mode, drawBase, drawPin, drawResult, drawStrokes, toMetres } from './sheet';
 
 type Screen = 'start' | 'loading' | 'draw' | 'result';
 
 const MODE_CHIP: Record<Mode, string> = {
-  blank: 'Blank sheet',
+  landmarks: 'Landmarks given',
   roads: 'Main roads given',
   buildings: 'Buildings given',
 };
-
-/** Below this much scoreable street length, in metres, there is too little to draw. */
-const MIN_STREET_LENGTH = 600;
 
 const $ = <T extends HTMLElement>(id: string) => {
   const el = document.getElementById(id);
@@ -189,14 +186,14 @@ async function startRound(): Promise<void> {
     return;
   }
   const scoreable = state.map.roads
-    .filter((r) => state.mode === 'blank' || r.cls === 'minor')
+    .filter((r) => state.mode === 'landmarks' || r.cls === 'minor')
     .reduce((sum, r) => sum + r.pts.slice(1).reduce((s, p, i) => s + dist(r.pts[i]!, p), 0), 0);
   if (scoreable < MIN_STREET_LENGTH) {
     setScreen('start');
     ui.startError.textContent =
-      state.mode === 'blank'
+      state.mode === 'landmarks'
         ? 'OpenStreetMap has almost no streets mapped here. Pick a spot closer to a town centre.'
-        : 'Apart from the main roads there are almost no streets mapped here. Pick another spot, or choose Blank sheet.';
+        : 'Apart from the main roads there are almost no streets mapped here. Pick another spot, or choose Landmarks.';
     return;
   }
   ui.msg.textContent = '';
@@ -380,7 +377,13 @@ document.addEventListener('keydown', (e) => {
 
 ui.reveal.addEventListener('click', () => {
   if (!state.map || !state.strokes.length || active || erasing) return;
-  const result = scoreDrawing(state.map.roads, state.strokes, state.mode !== 'blank', state.map.named);
+  const result = scoreDrawing(
+    state.map.roads,
+    state.strokes,
+    state.mode !== 'landmarks',
+    state.map.named,
+    state.map.tunnels,
+  );
   // Ink the real streets outward from the pin.
   const r2 = (p: { a: Pt; b: Pt }) => (p.a.x + p.b.x) ** 2 + (p.a.y + p.b.y) ** 2;
   result.roadPieces.sort((x, y) => r2(x) - r2(y));

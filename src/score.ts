@@ -15,6 +15,8 @@ const STEP = 8;
  * dense grid of alleys collects a little from every alley.
  */
 const MIN_ALIGNMENT = Math.cos(Math.PI / 6);
+/** How close, in metres, a name's line must run to a street piece to give it that name. */
+const NAME_MATCH = 8;
 /** A drawn line this close to one already drawn, in metres, going the same way, is a retrace. */
 const RETRACE = 12;
 /**
@@ -29,6 +31,11 @@ export interface Piece {
   hit: boolean;
 }
 
+export interface RoadPiece extends Piece {
+  /** Part of a street the score asks you to remember. Other streets only earn credit. */
+  key: boolean;
+}
+
 export interface NamedStreet {
   name: string;
   length: number;
@@ -38,24 +45,68 @@ export interface NamedStreet {
 export interface ScoreResult {
   /** 0–100, the harmonic mean of recall and precision. */
   score: number;
-  /** Share of real street length that has a drawn line near it. */
+  /** Share of key street length that has a drawn line near it. */
   recall: number;
   /** Share of drawn length that lies on a real street. */
   precision: number;
   /** Real streets that were scored, cut into pieces marked remembered or forgotten. */
-  roadPieces: Piece[];
+  roadPieces: RoadPiece[];
   /** The player's lines in pieces; a miss is an imaginary road. Lines over hint roads are left out. */
   strokePieces: Piece[];
-  /** Scored named streets, longest first. */
+  /** Key named streets, longest first. */
   streets: NamedStreet[];
 }
+
+/** Numbered side streets in Korean addressing, such as 와우산로21길 or 동교로23가길. */
+const SIDE_STREET = /\d+[가-힣]?길$/;
+/** A named street this long inside the square, in metres, is one people know by name. */
+const KEY_NAME_LENGTH = 300;
+/**
+ * Below this much street length, in metres, there is too little to ask for: with fewer key streets
+ * than this, every street is asked for, and the start screen turns a place down with less.
+ */
+export const MIN_STREET_LENGTH = 600;
+/**
+ * Key streets, leaving out the longest key name, should be at least this share of the streets in
+ * play, and at least as long as that name. Below it, the next longest names are asked for as well. With the main roads printed in Gangnam,
+ * 990 m of 11.6 km was key (the rest is numbered side streets), and drawing that one street scored
+ * 100. In Jamsil 53% was key, but 잠실로 was 70% of that and alone scored 82.
+ */
+const MIN_KEY_SHARE = 0.2;
+
+/**
+ * How far each street name runs through the square, in metres. Only the parts lying on the scored
+ * network count: name lines have no tunnel flag, so an underpass would otherwise pass as a long
+ * street. Motorway and ramp names are left out; nobody draws an interchange from memory.
+ */
+function nameLengths(named: Road[], onNetwork: (p: Directed) => boolean): Map<string, number> {
+  const length = new Map<string, number>();
+  for (const r of named) {
+    if (!r.name || r.motorway) continue;
+    const len = directed(r.pts, 0).reduce((sum, p) => sum + (onNetwork(p) ? dist(p.a, p.b) : 0), 0);
+    length.set(r.name, (length.get(r.name) ?? 0) + len);
+  }
+  return length;
+}
+
+/**
+ * A street people know by name: one that runs a fair way through the square. Alleys are left out,
+ * which in Seoul means the numbered side streets, since there nearly every alley has a name.
+ */
+const isKeyName = (name: string, length: number) => length >= KEY_NAME_LENGTH && !SIDE_STREET.test(name);
 
 /**
  * Scores a drawing against the real street network. With `hintsGiven`, the major roads were
  * printed on the sheet, so they are neither rewarded nor counted against the player. `named`
  * carries street names, which the map keeps on separate lines from the network itself.
  */
-export function scoreDrawing(roads: Road[], strokes: Pt[][], hintsGiven: boolean, named: Road[] = roads): ScoreResult {
+export function scoreDrawing(
+  roads: Road[],
+  strokes: Pt[][],
+  hintsGiven: boolean,
+  named: Road[] = roads,
+  tunnels: Pt[][] = [],
+): ScoreResult {
   const targets = hintsGiven ? roads.filter((r) => r.cls === 'minor') : roads;
   const hints = hintsGiven ? roads.filter((r) => r.cls === 'major') : [];
   const drawnPieces = strokes.map((s) => directed(s, SMOOTHING));
@@ -70,6 +121,50 @@ export function scoreDrawing(roads: Road[], strokes: Pt[][], hintsGiven: boolean
   const targetPieces = targets.map((r) => directed(r.pts, 0).filter((p) => !hintIndex.near(p, TOLERANCE)));
   const targetIndex = new PieceIndex(TOLERANCE);
   for (const ps of targetPieces) targetIndex.add(ps);
+
+  // Recall asks only for key streets: through roads, plus long named ones. Names live on their own
+  // lines in the map, so a piece is a named key street when one of those lines runs along it, and
+  // a name piece counts only where it runs along the network (the whole network, printed roads
+  // included, so a name's length doesn't depend on the help level). A name line is drawn on its
+  // own street's geometry, so one lying closer to a tunnel than to any surface street is the
+  // tunnel's, even where a surface street runs right above it.
+  const networkIndex = new PieceIndex(TOLERANCE);
+  for (const r of roads) networkIndex.add(directed(r.pts, 0));
+  const tunnelIndex = new PieceIndex(TOLERANCE);
+  for (const t of tunnels) tunnelIndex.add(directed(t, 0));
+  const onNetwork = (p: Directed) => {
+    const d = networkIndex.nearest(p, NAME_MATCH);
+    return d <= NAME_MATCH && d <= tunnelIndex.nearest(p, NAME_MATCH);
+  };
+  // A printed road's name asks for nothing, not even a minor stretch that shares it.
+  const printed = new Set(hintsGiven ? named.filter((r) => r.cls === 'major').map((r) => r.name) : []);
+  const lengths = [...nameLengths(named, onNetwork)].filter(([n]) => !printed.has(n));
+  const keyNames = new Set(lengths.filter(([n, len]) => isKeyName(n, len)).map(([n]) => n));
+  const isKey = targets.map((r, i) => targetPieces[i]!.map(() => !r.motorway && r.key));
+  let keyLength = 0;
+  /** Marks the street pieces that lines of the given names run along as key. */
+  const askFor = (names: Set<string>) => {
+    const index = new PieceIndex(TOLERANCE);
+    for (const r of named) if (r.name && names.has(r.name)) index.add(directed(r.pts, 0).filter(onNetwork));
+    targetPieces.forEach((ps, i) =>
+      ps.forEach((p, k) => {
+        if (!targets[i]!.motorway && !isKey[i]![k] && index.near(p, NAME_MATCH)) isKey[i]![k] = true;
+      }),
+    );
+    keyLength = targetPieces.reduce((sum, ps, i) => sum + ps.reduce((s, p, k) => s + (isKey[i]![k] ? dist(p.a, p.b) : 0), 0), 0);
+  };
+  askFor(keyNames);
+  // Too small a share, or one street making up most of it, and that street would be the whole
+  // game, so the next longest names are asked for too, numbered side streets included.
+  const inPlay = targetPieces.reduce((sum, ps) => sum + ps.reduce((s, p) => s + dist(p.a, p.b), 0), 0);
+  const longest = Math.max(0, ...lengths.filter(([n]) => keyNames.has(n)).map(([, len]) => len));
+  for (const [name] of lengths.filter(([n]) => !keyNames.has(n)).sort((x, y) => y[1] - x[1])) {
+    if (keyLength - longest >= Math.max(MIN_KEY_SHARE * inPlay, longest)) break;
+    keyNames.add(name);
+    askFor(new Set([name]));
+  }
+  // With next to no key street, recall would be all or nothing, so every street is asked for.
+  const anyKey = keyLength >= MIN_STREET_LENGTH;
 
   // Going over the same line again draws nothing new, so a piece running alongside one already
   // counted is skipped, for precision and for recall alike. Otherwise retracing one known street
@@ -103,22 +198,27 @@ export function scoreDrawing(roads: Road[], strokes: Pt[][], hintsGiven: boolean
   const strokeIndex = new PieceIndex(TOLERANCE);
   strokeIndex.add(kept);
 
-  const roadPieces: Piece[] = [];
+  const roadPieces: RoadPiece[] = [];
   let total = 0;
   let remembered = 0;
-  for (const p of targetPieces.flat()) {
-    const len = dist(p.a, p.b);
-    const hit = strokeIndex.near(p, TOLERANCE);
-    roadPieces.push({ a: p.a, b: p.b, hit });
-    total += len;
-    if (hit) remembered += len;
-  }
+  targetPieces.forEach((ps, i) =>
+    ps.forEach((p, k) => {
+      const key = !anyKey || isKey[i]![k]!;
+      const hit = strokeIndex.near(p, TOLERANCE);
+      roadPieces.push({ a: p.a, b: p.b, hit, key });
+      if (!key) return;
+      const len = dist(p.a, p.b);
+      total += len;
+      if (hit) remembered += len;
+    }),
+  );
 
   const byName = new Map<string, { length: number; hit: number }>();
   for (const road of named) {
-    if (!road.name || (hintsGiven && road.cls === 'major')) continue;
+    if (!road.name || !keyNames.has(road.name)) continue;
     const entry = byName.get(road.name) ?? { length: 0, hit: 0 };
-    for (const p of directed(road.pts, 0)) {
+    // Only the parts that are asked for: on the network and not alongside a printed road.
+    for (const p of directed(road.pts, 0).filter((q) => targetIndex.near(q, NAME_MATCH))) {
       const len = dist(p.a, p.b);
       entry.length += len;
       if (strokeIndex.near(p, TOLERANCE)) entry.hit += len;
@@ -223,17 +323,28 @@ class PieceIndex {
   }
 
   near(q: Directed, r: number): boolean {
+    return this.nearest(q, r, true) <= r;
+  }
+
+  /** Distance to the nearest piece running the same way, if within r; otherwise Infinity. */
+  nearest(q: Directed, r: number, any = false): number {
     const m = mid(q.a, q.b);
     const cx = Math.floor(m.x / this.cell);
     const cy = Math.floor(m.y / this.cell);
+    let best = Infinity;
     for (let x = cx - 1; x <= cx + 1; x++) {
       for (let y = cy - 1; y <= cy + 1; y++) {
         for (const p of this.cells.get(`${x},${y}`) ?? []) {
-          if (Math.abs(p.ux * q.ux + p.uy * q.uy) >= MIN_ALIGNMENT && distToSegment(m, p.a, p.b) <= r) return true;
+          if (Math.abs(p.ux * q.ux + p.uy * q.uy) < MIN_ALIGNMENT) continue;
+          const d = distToSegment(m, p.a, p.b);
+          if (d <= r && d < best) {
+            if (any) return d;
+            best = d;
+          }
         }
       }
     }
-    return false;
+    return best;
   }
 }
 

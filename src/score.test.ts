@@ -7,7 +7,7 @@ const line = (x0: number, y0: number, x1: number, y1: number): Pt[] => [
   { x: x0, y: y0 },
   { x: x1, y: y1 },
 ];
-const road = (pts: Pt[], cls: Road['cls'] = 'minor', name: string | null = null): Road => ({ name, cls, pts });
+const road = (pts: Pt[], cls: Road['cls'] = 'minor', name: string | null = null, key = false): Road => ({ name, cls, key, pts });
 
 describe('scoreDrawing', () => {
   const roads = [road(line(-400, 0, 400, 0), 'minor', 'East St'), road(line(0, -400, 0, 400), 'minor', 'North St')];
@@ -107,6 +107,97 @@ describe('scoreDrawing', () => {
     expect(r.precision).toBeLessThan(0.6);
   });
 
+  it('asks only for key streets, and credits an alley drawn as real', () => {
+    const alley = road(line(-400, 100, 400, 100), 'minor', '와우산로21길');
+    const unnamed = road(line(-400, 150, 400, 150));
+    const r = scoreDrawing([...roads, alley, unnamed], [line(-400, 0, 400, 0), line(-400, 100, 400, 100)], false);
+    // East St of East St + North St is remembered; the alleys don't enter recall.
+    expect(r.recall).toBeCloseTo(0.5, 2);
+    // The drawn alley is a real street, not an imaginary one.
+    expect(r.precision).toBeCloseTo(1, 5);
+    expect(r.streets.map((s) => s.name)).not.toContain('와우산로21길');
+    expect(r.roadPieces.some((p) => !p.key)).toBe(true);
+  });
+
+  it('counts a through road as key even without a name', () => {
+    const tertiary = road(line(-400, 100, 400, 100), 'minor', null, true);
+    const r = scoreDrawing([tertiary, road(line(-400, 200, 400, 200))], [line(-400, 100, 400, 100)], false, []);
+    expect(r.recall).toBeCloseTo(1, 5);
+  });
+
+  it('asks for no street by the name of an underpass', () => {
+    // A 600 m name with only its first 200 m over a scored street: the rest is underground.
+    const surface = road(line(-300, 100, -100, 100));
+    const underpass = road(line(-300, 100, 300, 100), 'minor', 'Underpass');
+    const r = scoreDrawing([...roads, surface], [line(-400, 0, 400, 0), line(-10, -400, -10, 400)], false, [...roads, underpass]);
+    expect(r.recall).toBeCloseTo(1, 5);
+    expect(r.streets.map((s) => s.name)).not.toContain('Underpass');
+  });
+
+  it('asks for no street by the name of an underpass running right under it', () => {
+    // An unnamed surface street, and 3 m off it the tunnel the name line belongs to.
+    const surface = road(line(-300, 100, 300, 100));
+    const tunnel = line(-300, 103, 300, 103);
+    const underpass = road(tunnel, 'minor', 'Underpass');
+    const drawing = [line(-400, 0, 400, 0), line(-10, -400, -10, 400)];
+    const r = scoreDrawing([...roads, surface], drawing, false, [...roads, underpass], [tunnel]);
+    expect(r.recall).toBeCloseTo(1, 5);
+    expect(r.streets.map((s) => s.name)).not.toContain('Underpass');
+    // Without the tunnel, the same name line would be the surface street's.
+    expect(scoreDrawing([...roads, surface], drawing, false, [...roads, underpass]).recall).toBeLessThan(1);
+  });
+
+  it('never asks for a motorway, even beside a key street', () => {
+    const motorway: Road = { ...road(line(-400, 100, 400, 100), 'major'), motorway: true };
+    const main = road(line(-400, 104, 400, 104), 'minor', 'Main St');
+    const r = scoreDrawing([...roads, motorway, main], [], false);
+    const onMotorway = r.roadPieces.filter((p) => p.a.y === 100);
+    expect(onMotorway.length).toBeGreaterThan(0);
+    expect(onMotorway.every((p) => !p.key)).toBe(true);
+    expect(r.roadPieces.filter((p) => p.a.y === 104).every((p) => p.key)).toBe(true);
+  });
+
+  it('tops up a small share of key streets with the next longest names', () => {
+    // 700 m of through road among 4.8 km of numbered side streets: 20% of 5.5 km is 1.1 km, so
+    // the longest side street (660 m) is asked for too, and only that one.
+    const tertiary = road(line(-350, 450, 350, 450), 'minor', null, true);
+    const side = Array.from({ length: 10 }, (_, i) => road(line(-400, -400 + i * 80, -100 + i * 40, -400 + i * 80), 'minor', `가로${i + 1}길`));
+    const r = scoreDrawing([tertiary, ...side], [line(-350, 450, 350, 450)], false);
+    expect(r.recall).toBeCloseTo(700 / 1360, 2);
+    expect(r.streets.map((s) => s.name)).toEqual(['가로10길']);
+  });
+
+  it('tops up until no one street is most of what is asked', () => {
+    // A St is 800 m of 1150 m key: three 200 m side streets bring the rest up to its length.
+    const a = road(line(-400, 0, 400, 0), 'minor', 'A St');
+    const b = road(line(-175, 100, 175, 100), 'minor', 'B St');
+    const side = Array.from({ length: 5 }, (_, i) => road(line(-100, 200 + i * 50, 100, 200 + i * 50), 'minor', `가로${i + 1}길`));
+    const r = scoreDrawing([a, b, ...side], [line(-400, 0, 400, 0)], false);
+    expect(r.recall).toBeCloseTo(800 / 1750, 2);
+  });
+
+  it('asks only for key streets from exactly 600 m of them', () => {
+    const tertiary = road(line(-300, 100, 300, 100), 'minor', null, true);
+    const r = scoreDrawing([tertiary, road(line(-400, 200, 400, 200))], [line(-400, 200, 400, 200)], false, []);
+    expect(r.recall).toBe(0);
+  });
+
+  it('asks for no street by the name of a motorway', () => {
+    const expressway = road(line(-400, 100, 400, 100), 'major', 'Expressway');
+    const r = scoreDrawing([...roads, expressway], [line(-400, 0, 400, 0), line(-10, -400, -10, 400)], false, [
+      ...roads,
+      { ...expressway, motorway: true },
+    ]);
+    expect(r.recall).toBeCloseTo(1, 5);
+    expect(r.precision).toBeCloseTo(1, 5);
+  });
+
+  it('asks for every street when the key streets are too short to score', () => {
+    const stub = road(line(-50, 100, 50, 100), 'minor', null, true);
+    const r = scoreDrawing([stub, road(line(-400, 200, 400, 200))], [line(-400, 200, 400, 200)], false, []);
+    expect(r.recall).toBeCloseTo(800 / 900, 2);
+  });
+
   it('scores 0 for an empty drawing', () => {
     const r = scoreDrawing(roads, [], false);
     expect(r.score).toBe(0);
@@ -120,6 +211,15 @@ describe('scoreDrawing', () => {
     expect(r.recall).toBeCloseTo(0.5, 2);
     expect(r.precision).toBeCloseTo(1, 5);
     expect(r.streets.map((s) => s.name)).not.toContain('Big Rd');
+  });
+
+  it('asks for no part of a printed road by name, even its minor stretches', () => {
+    const big = road(line(-400, 200, 0, 200), 'major', 'Big Rd');
+    const tail = road(line(0, 300, 400, 300), 'minor', 'Big Rd');
+    const r = scoreDrawing([...roads, big, tail], [line(-400, 0, 400, 0)], true);
+    expect(r.streets.map((s) => s.name)).not.toContain('Big Rd');
+    // East St of East St + North St; the tail isn't asked for.
+    expect(r.recall).toBeCloseTo(0.5, 2);
   });
 
   it('gives nothing for tracing a printed road, even to a side street beside it', () => {

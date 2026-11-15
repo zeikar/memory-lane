@@ -7,7 +7,25 @@ export type RoadClass = 'major' | 'minor';
 export interface Road {
   name: string | null;
   cls: RoadClass;
+  /**
+   * A through road (trunk down to tertiary, not a ramp) that anyone living nearby would know. Only
+   * read on the street network; named lines carry false.
+   */
+  key: boolean;
+  /** A motorway or ramp: a real street, but never asked for, by class or by name. Set on both. */
+  motorway?: true;
   pts: Pt[];
+}
+
+export interface Landmark {
+  name: string;
+  /** OpenMapTiles POI class, e.g. railway, college, park; `peak` for a mountain top. */
+  cls: string;
+  at: Pt;
+  /** 0 is the most memorable kind. See LANDMARK_TIERS. */
+  tier: number;
+  /** The tiles' own importance order within a tile, 1 first. */
+  rank: number;
 }
 
 /** Outer ring first, then any holes. */
@@ -18,11 +36,31 @@ export interface MapData {
   roads: Road[];
   /** Named lines for the same streets, used for labels and the remembered/forgotten lists. */
   named: Road[];
+  /** Streets in tunnels. Not scored, but their names are on `named` and must be told apart. */
+  tunnels: Pt[][];
   water: Pt[][];
   waterAreas: Polygon[];
+  /** Grass of every kind: parks, gardens, lawns. */
+  parks: Polygon[];
+  woods: Polygon[];
   rail: Pt[][];
   buildings: Polygon[];
+  /** Named places that could anchor a memory, best first. See pickLandmarks. */
+  landmarks: Landmark[];
 }
+
+export const emptyMap = (): MapData => ({
+  roads: [],
+  named: [],
+  tunnels: [],
+  water: [],
+  waterAreas: [],
+  parks: [],
+  woods: [],
+  rail: [],
+  buildings: [],
+  landmarks: [],
+});
 
 /**
  * The map comes from OpenFreeMap's OpenMapTiles vector tiles: CDN-cached, CORS-open and free,
@@ -36,6 +74,9 @@ const TILEJSON = 'https://tiles.openfreemap.org/planet';
 // left out: nobody draws them from memory and they would swamp the score.
 const MAJOR = new Set(['motorway', 'trunk', 'primary', 'secondary']);
 const MINOR = new Set(['tertiary', 'minor']);
+// Motorways and their ramps are out of key: nobody draws an interchange from memory, and in places
+// like Yeouido they were most of the asked-for length. They still count as real streets.
+const KEY = new Set(['trunk', 'primary', 'secondary', 'tertiary']);
 const RAIL = new Set(['rail', 'light_rail', 'narrow_gauge']);
 const WATERWAY = new Set(['river', 'canal', 'stream']);
 
@@ -45,7 +86,7 @@ type Props = Record<string, string | number | boolean>;
 export interface RawFeature {
   layer: string;
   props: Props;
-  /** 2 = line, 3 = polygon, as in the vector tile spec. */
+  /** 1 = point, 2 = line, 3 = polygon, as in the vector tile spec. */
   type: number;
   rings: LatLon[][];
 }
@@ -106,16 +147,23 @@ export function collectTile(features: RawFeature[], tile: Tile, center: LatLon, 
 
   for (const f of features) {
     const p = f.props;
-    if (p.brunnel === 'tunnel') continue;
+    const motorway = p.class === 'motorway' || p.ramp === 1 ? { motorway: true as const } : {};
+    if (p.brunnel === 'tunnel') {
+      if (f.type === 2 && f.layer === 'transportation' && roadClass(p)) data.tunnels.push(...lines(f));
+      continue;
+    }
     if (f.type === 2) {
       if (f.layer === 'transportation') {
         const cls = roadClass(p);
-        if (cls) for (const pts of lines(f)) data.roads.push({ name: null, cls, pts });
+        const key = KEY.has(String(p.class ?? '')) && p.ramp !== 1;
+        if (cls) for (const pts of lines(f)) data.roads.push({ name: null, cls, key, ...motorway, pts });
         else if (RAIL.has(String(p.subclass ?? ''))) data.rail.push(...lines(f));
       } else if (f.layer === 'transportation_name') {
         const cls = roadClass(p);
         const name = typeof p.name === 'string' && p.name ? p.name : null;
-        if (cls && name) for (const pts of lines(f)) data.named.push({ name, cls, pts });
+        // This layer has no brunnel, so underpass names get through; score.ts keeps only the parts
+        // of a name that lie on the scored network rather than on a tunnel.
+        if (cls && name) for (const pts of lines(f)) data.named.push({ name, cls, key: false, ...motorway, pts });
       } else if (f.layer === 'waterway' && WATERWAY.has(String(p.class ?? ''))) {
         data.water.push(...lines(f));
       }
@@ -123,11 +171,88 @@ export function collectTile(features: RawFeature[], tile: Tile, center: LatLon, 
       const poly = f.rings.map((ring) => ring.map(project));
       if (f.layer === 'building') data.buildings.push(poly);
       else if (f.layer === 'water') data.waterAreas.push(poly);
+      // City parks are grass in `landcover`. The `park` layer is protected areas and historic
+      // districts, which can cover a whole old town.
+      else if (f.layer === 'landcover' && p.class === 'grass') data.parks.push(poly);
+      else if (f.layer === 'landcover' && p.class === 'wood') data.woods.push(poly);
+    } else if (f.type === 1 && (f.layer === 'poi' || f.layer === 'mountain_peak') && typeof p.name === 'string' && p.name) {
+      // Mountain tops are their own layer, where `class` says peak, volcano, saddle or cliff.
+      const peak = f.layer === 'mountain_peak';
+      const cls = peak ? 'peak' : String(p.class ?? '');
+      const tier = landmarkTier(cls, String((peak ? p.class : p.subclass) ?? ''));
+      if (tier === undefined) continue;
+      const at = project(f.rings[0]![0]!);
+      const inTile = at.x >= own.minX && at.x <= own.maxX && at.y >= own.minY && at.y <= own.maxY;
+      const rank = typeof p.rank === 'number' ? p.rank : 99;
+      if (inTile && Math.abs(at.x) <= half && Math.abs(at.y) <= half) data.landmarks.push({ name: p.name, cls, at, tier, rank });
     }
   }
 }
 
-const LAYERS = ['transportation', 'transportation_name', 'waterway', 'water', 'building'];
+/**
+ * POI kinds worth printing, as OpenMapTiles class/subclass (`*` for any subclass), by tier. The
+ * classes alone are too broad: hospital includes clinics, town_hall community centres, library
+ * bookshops and college cram schools.
+ */
+const LANDMARK_TIERS: Record<string, number> = {
+  'railway/station': 0,
+  'railway/subway': 0,
+  'railway/halt': 0,
+  'college/university': 1,
+  'stadium/*': 1,
+  'museum/museum': 1,
+  'castle/castle': 1,
+  'peak/peak': 1,
+  'peak/volcano': 1,
+  // Both let through noise: clinics tagged as hospitals, karaoke tagged as an attraction.
+  'hospital/hospital': 2,
+  'attraction/attraction': 2,
+  'town_hall/townhall': 2,
+  'park/park': 2,
+  'monument/monument': 2,
+  'theatre/theatre': 2,
+  'library/library': 2,
+  'place_of_worship/*': 2,
+  'school/school': 3,
+  'cinema/cinema': 3,
+  'police/police': 3,
+  'fire_station/fire_station': 3,
+  'post/post_office': 3,
+};
+
+function landmarkTier(cls: string, subclass: string): number | undefined {
+  return LANDMARK_TIERS[`${cls}/${subclass}`] ?? LANDMARK_TIERS[`${cls}/*`];
+}
+
+/** At most this many landmarks of one class, so a block of clinics can't fill the sheet. */
+const PER_CLASS = 3;
+/** Two stations closer than this, in metres, are one place (Times Square, Times Square–42nd St). */
+const STATION_GAP = 250;
+
+/**
+ * Picks the landmarks to print: the most memorable kinds first, then the tiles' own rank, each
+ * name once, at most PER_CLASS per class, and none within `gap` metres of one already picked.
+ * Nothing sits on the pin except a station, which is often what the player searched for.
+ */
+export function pickLandmarks(all: Landmark[], max: number, gap: number): Landmark[] {
+  const picked: Landmark[] = [];
+  const names = new Set<string>();
+  const perClass = new Map<string, number>();
+  for (const l of [...all].sort((a, b) => a.tier - b.tier || a.rank - b.rank)) {
+    if (picked.length >= max) break;
+    const station = l.cls === 'railway';
+    if (names.has(l.name) || (perClass.get(l.cls) ?? 0) >= PER_CLASS) continue;
+    if (!station && Math.hypot(l.at.x, l.at.y) < gap / 2) continue;
+    const near = (q: Landmark) => Math.hypot(q.at.x - l.at.x, q.at.y - l.at.y);
+    if (picked.some((q) => near(q) < (station && q.cls === 'railway' ? STATION_GAP : gap))) continue;
+    picked.push(l);
+    names.add(l.name);
+    perClass.set(l.cls, (perClass.get(l.cls) ?? 0) + 1);
+  }
+  return picked;
+}
+
+const LAYERS = ['transportation', 'transportation_name', 'waterway', 'water', 'landcover', 'building', 'poi', 'mountain_peak'];
 
 function decodeTile(buf: ArrayBuffer, tile: Tile): RawFeature[] {
   const vt = new VectorTile(new PbfReader(buf));
@@ -181,8 +306,9 @@ export async function fetchMap(center: LatLon, half: number): Promise<MapData> {
       return res.arrayBuffer();
     }),
   );
-  const data: MapData = { roads: [], named: [], water: [], waterAreas: [], rail: [], buildings: [] };
+  const data = emptyMap();
   tiles.forEach((t, i) => collectTile(decodeTile(bufs[i]!, t), t, center, half, data));
+  data.landmarks = pickLandmarks(data.landmarks, 12, 120);
   return data;
 }
 
