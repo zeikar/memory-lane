@@ -42,12 +42,17 @@
         <fieldset class="modes">
           <legend>How much help</legend>
           <label class="mode">
+            <input type="radio" name="mode" value="quiz" checked />
+            <span class="mode-name">One street at a time</span>
+            <span class="mode-desc">Up to five named streets, asked one by one and checked as you go. Each answer stays on the sheet to help with the next.</span>
+          </label>
+          <label class="mode">
             <input type="radio" name="mode" value="landmarks" />
             <span class="mode-name">Landmarks</span>
             <span class="mode-desc">Stations, landmarks, parks, woods, hills, rivers and railways are marked. The roads are up to you.</span>
           </label>
           <label class="mode">
-            <input type="radio" name="mode" value="roads" checked />
+            <input type="radio" name="mode" value="roads" />
             <span class="mode-name">Main roads</span>
             <span class="mode-desc">Landmarks plus the big roads.</span>
           </label>
@@ -73,6 +78,11 @@
       </section>
 
       <section class="play" id="play" hidden>
+        <div class="prompt" id="prompt" hidden>
+          <p class="prompt-count" id="prompt-count"></p>
+          <p class="prompt-text" id="prompt-text"></p>
+        </div>
+
         <div class="sheet-wrap" id="sheet-wrap">
           <canvas id="sheet" aria-label="Drawing sheet. Draw streets with the pointer."></canvas>
           <p class="sheet-msg" id="sheet-msg" role="status"></p>
@@ -91,9 +101,10 @@
           <p class="verdict" id="verdict"></p>
           <dl class="stats">
             <div><dt>Streets you remembered</dt><dd id="recall"></dd></div>
-            <div><dt>Your lines on real streets</dt><dd id="precision"></dd></div>
+            <div><dt id="precision-label">Your lines on real streets</dt><dd id="precision"></dd></div>
           </dl>
-          <div class="streets">
+          <ol class="answers" id="answers" aria-label="Your streets" hidden></ol>
+          <div class="streets" id="streets">
             <div id="best-wrap">
               <h2>Best remembered</h2>
               <ul id="best"></ul>

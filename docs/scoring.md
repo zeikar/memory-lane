@@ -71,7 +71,7 @@ side streets included, are asked for as well until they are. With the main roads
 had 990 m key out of 11.6 km, and drawing that one street scored 100; Jamsil had 53% key, but
 잠실로 was 70% of it and alone scored 82 (69 now, against calibrate's limit of 70, so live map
 edits there can trip it). Asking for every street instead closed that too, but put Hongdae, Koenji, Gangnam and Mapo back
-at 14–26 km asked on the default level. A place whose streets have no names to add keeps what it
+at 14–26 km asked on the Main roads level. A place whose streets have no names to add keeps what it
 has.
 
 Alleys aren't wasted effort: a drawn alley counts as a real street for precision. If the key
@@ -95,6 +95,15 @@ point, so it isn't there.
 
 The price is a higher floor for drawing lines everywhere (see below), traded for a game a player
 can score on.
+
+## One street at a time
+
+The default level asks for one named street at a time. `scoreStreet` scores the drawing against
+that street alone: the street's asked-for pieces (`NamedStreet.pieces`, from the full-map scoring
+with nothing printed) for recall, and precision against those pieces only, so a line along some
+other real street is imaginary there. The fade past 18 m applies, and retraces are skipped as in
+the full map (`keepStrokes` is shared). The round's score is the average of the questions (up to five); a
+skipped question scores 0.
 
 ## Attacks and the rule that closes each
 

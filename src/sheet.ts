@@ -1,11 +1,13 @@
 import { HALF, type Pt } from './geo';
-import type { MapData, Polygon } from './osm';
+import type { MapData, Polygon, Road } from './osm';
 import type { Piece, Printed, ScoreResult } from './score';
 
-export type Mode = 'landmarks' | 'roads' | 'alleys' | 'buildings';
+/** The help levels; `quiz` asks for one street at a time. */
+export type Mode = 'quiz' | 'landmarks' | 'roads' | 'alleys' | 'buildings';
 
 /** Which streets each help level prints, for scoring. */
-export const printedFor = (mode: Mode): Printed => (mode === 'landmarks' ? 'none' : mode === 'alleys' ? 'alleys' : 'major');
+export const printedFor = (mode: Mode): Printed =>
+  mode === 'quiz' || mode === 'landmarks' ? 'none' : mode === 'alleys' ? 'alleys' : 'major';
 
 /** Canvas colours. The legend in style.css uses the same values. */
 export const INK = {
@@ -202,12 +204,21 @@ function drawHintRoads(ctx: CanvasRenderingContext2D, size: number, map: MapData
     ctx.stroke();
   }
   ctx.setLineDash([]);
+  labelRoads(
+    ctx,
+    size,
+    map.named.filter((r) => r.cls === 'major'),
+  );
+}
 
-  // One label per road name, on its longest straight stretch.
+/**
+ * One label per road name, on its longest straight stretch, where it fits. With `always`, a name
+ * that doesn't fit is written level at that stretch instead, for streets that must be named.
+ */
+function labelRoads(ctx: CanvasRenderingContext2D, size: number, lines: Road[], always = false): void {
   const t = textUnit(size);
   const best = new Map<string, { a: Pt; b: Pt; len: number }>();
-  for (const r of map.named) {
-    if (r.cls !== 'major') continue;
+  for (const r of lines) {
     if (!r.name) continue;
     for (let i = 0; i + 1 < r.pts.length; i++) {
       const a = r.pts[i]!;
@@ -222,12 +233,21 @@ function drawHintRoads(ctx: CanvasRenderingContext2D, size: number, map: MapData
   for (const [name, { a, b }] of best) {
     const [ax, ay] = toPx(a, size);
     const [bx, by] = toPx(b, size);
-    if (ctx.measureText(name).width > Math.hypot(bx - ax, by - ay) * 0.9) continue;
-    let angle = Math.atan2(by - ay, bx - ax);
+    const fits = ctx.measureText(name).width <= Math.hypot(bx - ax, by - ay) * 0.9;
+    if (!fits && !always) continue;
+    let angle = fits ? Math.atan2(by - ay, bx - ax) : 0;
     if (angle > Math.PI / 2) angle -= Math.PI;
     if (angle < -Math.PI / 2) angle += Math.PI;
+    let cx = (ax + bx) / 2;
+    let cy = (ay + by) / 2;
+    if (!fits) {
+      // A level label can stick out past the sheet's edge; keep it whole.
+      const half = ctx.measureText(name).width / 2 + 4 * t;
+      cx = Math.min(Math.max(cx, half), size - half);
+      cy = Math.min(Math.max(cy, 16 * t), size - 4 * t);
+    }
     ctx.save();
-    ctx.translate((ax + bx) / 2, (ay + by) / 2);
+    ctx.translate(cx, cy);
     ctx.rotate(angle);
     ctx.lineWidth = 4 * t;
     ctx.strokeStyle = INK.paper;
@@ -318,15 +338,37 @@ export function drawBase(
   map: MapData | null,
   mode: Mode,
   printed: Piece[] = [],
+  answered: string[] = [],
 ): void {
   drawPaper(ctx, size);
   if (map) {
     drawContext(ctx, size, map, mode === 'buildings');
     if (printedFor(mode) === 'major') drawHintRoads(ctx, size, map);
     drawPrintedStreets(ctx, size, printed);
+    drawAnswered(ctx, size, map, answered);
     drawLandmarks(ctx, size, map);
   }
   drawFurniture(ctx, size);
+}
+
+/**
+ * Streets already asked on the one-street-at-a-time level: solid and named, so each answer becomes
+ * something to find the next street by.
+ */
+function drawAnswered(ctx: CanvasRenderingContext2D, size: number, map: MapData, names: string[]): void {
+  if (!names.length) return;
+  const lines = map.named.filter((r) => r.name && names.includes(r.name));
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = INK.hint;
+  ctx.lineWidth = Math.max(2.4 * unit(size), 1.5);
+  for (const r of lines) {
+    path(ctx, r.pts, size);
+    ctx.stroke();
+  }
+  labelRoads(ctx, size, lines, true);
+  ctx.restore();
 }
 
 /** The side streets printed on the Side streets level: thin, solid, unnamed. */
@@ -365,25 +407,52 @@ export function drawResult(
   result: ScoreResult,
   progress = 1,
 ): void {
-  const u = unit(size);
   drawPaper(ctx, size);
   // Every level reveals the buildings, so each street sits in its blocks.
   drawContext(ctx, size, map, true);
   // Under the result ink, so their paper halos don't cut through it.
   drawLandmarks(ctx, size, map);
+  if (printedFor(mode) === 'major') drawHintRoads(ctx, size, map);
+  drawPrintedStreets(ctx, size, result.printed);
+  drawAnswer(ctx, size, result, strokes, progress);
+  if (mode === 'quiz') {
+    const names = result.streets.map((s) => s.name);
+    labelRoads(
+      ctx,
+      size,
+      map.named.filter((r) => r.name && names.includes(r.name)),
+      true,
+    );
+  }
+  drawPin(ctx, size);
+  drawFurniture(ctx, size);
+}
+
+/**
+ * The real streets in result colours, with the player's lines over them and imaginary stretches
+ * highlighted: the reveal's ink, and a checked question on the one-street-at-a-time level.
+ * `progress` (0–1) is how much of the real network has been inked in so far. `missed` colours
+ * the forgotten stretches of asked-for streets.
+ */
+export function drawAnswer(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  result: ScoreResult,
+  strokes: Pt[][],
+  progress = 1,
+  missed: string = INK.forgotten,
+): void {
+  const u = unit(size);
+  ctx.save();
   ctx.lineCap = 'round';
   const shown = result.roadPieces.slice(0, Math.ceil(result.roadPieces.length * progress));
   // Alleys weren't asked for, so a forgotten one stays faint; a remembered one still shows.
   drawPieces(ctx, size, shown.filter((p) => !p.hit && !p.key), INK.forgotten, 1.6 * u);
-  drawPieces(ctx, size, shown.filter((p) => !p.hit && p.key), INK.forgotten, 3.8 * u);
+  drawPieces(ctx, size, shown.filter((p) => !p.hit && p.key), missed, 3.8 * u);
   drawPieces(ctx, size, shown.filter((p) => p.hit && !p.key), INK.remembered, 2.4 * u);
   drawPieces(ctx, size, shown.filter((p) => p.hit && p.key), INK.remembered, 4.4 * u);
-  if (printedFor(mode) === 'major') drawHintRoads(ctx, size, map);
-  drawPrintedStreets(ctx, size, result.printed);
   ctx.globalAlpha = 0.75;
   drawPieces(ctx, size, result.strokePieces.filter((p) => !p.hit), INK.imaginary, 8 * u);
-  ctx.globalAlpha = 1;
+  ctx.restore();
   drawStrokes(ctx, size, strokes);
-  drawPin(ctx, size);
-  drawFurniture(ctx, size);
 }

@@ -10,6 +10,7 @@ const MAT_INK = '#e9f0e6';
 const MAT_SOFT = '#a9c2b2';
 
 const MODE_NAME: Record<Mode, string> = {
+  quiz: 'One street at a time',
   landmarks: 'Landmarks given',
   roads: 'Main roads given',
   alleys: 'Side streets given',
@@ -81,7 +82,9 @@ export async function makeCard(
   ctx.fillStyle = MAT_SOFT;
   ctx.font = `500 22px ${FONT}`;
   ctx.fillText(`Streets remembered ${pct(result.recall)}`, x, H - pad - 44);
-  ctx.fillText(`Lines on real streets ${pct(result.precision)}`, x, H - pad - 12);
+  // On the one-street-at-a-time level a line only counts on the street asked for.
+  const lines = mode === 'quiz' ? 'Lines on the asked streets' : 'Lines on real streets';
+  ctx.fillText(`${lines} ${pct(result.precision)}`, x, H - pad - 12);
 
   return new Promise((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not create the image'))), 'image/png'),

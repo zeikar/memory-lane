@@ -2,12 +2,22 @@ import './style.css';
 import { makeCard, pct } from './card';
 import { HALF, type Pt, dist, distToSegment, makeProjection as project } from './geo';
 import { type MapData, type Place, fetchMap, reversePlace, searchPlaces } from './osm';
-import { MIN_STREET_LENGTH, type Piece, type ScoreResult, scoreDrawing, verdict } from './score';
-import { type Mode, drawBase, drawPin, drawResult, drawStrokes, printedFor, toMetres } from './sheet';
+import { MIN_QUESTIONS, answerLine, combine, pickQuestions, roundVerdict } from './quiz';
+import {
+  MIN_STREET_LENGTH,
+  type NamedStreet,
+  type Piece,
+  type ScoreResult,
+  scoreDrawing,
+  scoreStreet,
+  verdict,
+} from './score';
+import { INK, type Mode, drawAnswer, drawBase, drawPin, drawResult, drawStrokes, printedFor, toMetres } from './sheet';
 
 type Screen = 'start' | 'loading' | 'draw' | 'result';
 
 const MODE_CHIP: Record<Mode, string> = {
+  quiz: 'One street at a time',
   landmarks: 'Landmarks given',
   roads: 'Main roads given',
   alleys: 'Side streets given',
@@ -32,6 +42,9 @@ const ui = {
   startBtn: $<HTMLButtonElement>('start-btn'),
   startError: $('start-error'),
   play: $('play'),
+  prompt: $('prompt'),
+  promptCount: $('prompt-count'),
+  promptText: $('prompt-text'),
   wrap: $('sheet-wrap'),
   canvas: $<HTMLCanvasElement>('sheet'),
   msg: $('sheet-msg'),
@@ -45,9 +58,12 @@ const ui = {
   score: $('score'),
   verdict: $('verdict'),
   recall: $('recall'),
+  precisionLabel: $('precision-label'),
   precision: $('precision'),
   best: $<HTMLUListElement>('best'),
   bestWrap: $('best-wrap'),
+  streets: $('streets'),
+  answers: $<HTMLOListElement>('answers'),
   forgot: $<HTMLUListElement>('forgot'),
   forgotWrap: $('forgot-wrap'),
   save: $<HTMLButtonElement>('save'),
@@ -58,13 +74,23 @@ const ui = {
 const ctx = ui.canvas.getContext('2d')!;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
+interface Quiz {
+  questions: NamedStreet[];
+  /** One per question checked so far, with the lines drawn for it. */
+  answers: { result: ScoreResult; strokes: Pt[][] }[];
+  /** The current question has been checked and its answer is on the sheet. */
+  checked: boolean;
+}
+
 const state = {
   screen: 'start' as Screen,
   place: null as Place | null,
-  mode: 'roads' as Mode,
+  mode: 'quiz' as Mode,
   map: null as MapData | null,
   /** Side streets printed on the Side streets level. */
   printed: [] as Piece[],
+  /** The round on the one-street-at-a-time level. */
+  quiz: null as Quiz | null,
   strokes: [] as Pt[][],
   history: [] as Pt[][][],
   tool: 'pen' as 'pen' | 'eraser',
@@ -81,6 +107,8 @@ function setScreen(screen: Screen): void {
   ui.start.hidden = screen !== 'start';
   ui.play.hidden = screen === 'start';
   ui.toolbar.hidden = screen !== 'draw';
+  ui.prompt.hidden = screen !== 'draw' || !state.quiz;
+  document.body.dataset.mode = state.mode;
   ui.panel.hidden = screen !== 'result';
   ui.placeLabel.textContent = screen === 'start' ? '' : (state.place?.label ?? '');
   ui.modeChip.textContent = screen === 'start' ? '' : MODE_CHIP[state.mode];
@@ -177,7 +205,7 @@ ui.startBtn.addEventListener('click', () => void startRound());
 async function startRound(): Promise<void> {
   if (!state.place) return;
   const checked = document.querySelector<HTMLInputElement>('input[name="mode"]:checked');
-  state.mode = (checked?.value as Mode | undefined) ?? 'roads';
+  state.mode = (checked?.value as Mode | undefined) ?? 'quiz';
   state.map = null;
   resetDrawing();
   ui.announce.textContent = '';
@@ -204,8 +232,20 @@ async function startRound(): Promise<void> {
   // The Side streets level prints whatever isn't asked for, which only scoring knows.
   state.printed =
     state.mode === 'alleys' ? scoreDrawing(state.map.roads, [], 'alleys', state.map.named, state.map.tunnels).printed : [];
+  state.quiz = null;
+  if (state.mode === 'quiz') {
+    const questions = pickQuestions(questionPool());
+    if (questions.length < MIN_QUESTIONS) {
+      setScreen('start');
+      ui.startError.textContent =
+        'Too few named streets here for one at a time. Pick a spot closer to a town centre, or choose Landmarks.';
+      return;
+    }
+    state.quiz = { questions, answers: [], checked: false };
+  }
   ui.msg.textContent = '';
   setScreen('draw');
+  showQuestion();
   // A history entry for the round, so the browser's back button (a phone's back gesture) returns
   // to the start screen instead of leaving the game. Reused if Forward or a reload left one here.
   if (inRoundEntry()) history.replaceState({ round: true }, '');
@@ -219,8 +259,11 @@ const inRoundEntry = () => !!(history.state as { round?: boolean } | null)?.roun
 function leaveRound(): boolean {
   // Like Undo, Clear and Reveal, nothing happens mid-stroke.
   if (active || erasing) return false;
-  // Undo can bring back a cleared drawing, so a cleared one still counts.
-  const unsaved = state.screen === 'draw' && (state.strokes.length > 0 || state.history.length > 0);
+  // Undo can bring back a cleared drawing, so a cleared one still counts, and so does a round of
+  // questions under way.
+  const unsaved =
+    state.screen === 'draw' &&
+    (state.strokes.length > 0 || state.history.length > 0 || (state.quiz?.answers.length ?? 0) > 0);
   if (unsaved && !confirm('Leave this drawing? It will be lost.')) return false;
   resetDrawing();
   ui.announce.textContent = '';
@@ -262,9 +305,20 @@ function resetDrawing(): void {
 }
 
 function syncButtons(): void {
-  ui.undo.disabled = state.history.length === 0;
-  ui.clear.disabled = state.strokes.length === 0;
-  ui.reveal.disabled = state.strokes.length === 0;
+  const checked = !!state.quiz?.checked;
+  ui.undo.disabled = checked || state.history.length === 0;
+  ui.clear.disabled = checked || state.strokes.length === 0;
+  for (const b of ui.toolbar.querySelectorAll<HTMLButtonElement>('[data-tool]')) b.disabled = checked;
+  const q = state.quiz;
+  if (!q) {
+    ui.reveal.textContent = 'Reveal the real map';
+    ui.reveal.disabled = state.strokes.length === 0;
+    return;
+  }
+  // A question can be skipped by checking it with nothing drawn.
+  ui.reveal.disabled = false;
+  if (!q.checked) ui.reveal.textContent = state.strokes.length ? 'Check' : 'Skip';
+  else ui.reveal.textContent = q.answers.length < q.questions.length ? 'Next street' : 'See how you did';
 }
 
 function setTool(tool: 'pen' | 'eraser'): void {
@@ -293,7 +347,7 @@ function resize(): void {
   base.height = ui.canvas.height;
   const bctx = base.getContext('2d')!;
   bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  drawBase(bctx, size, state.screen === 'loading' ? null : state.map, state.mode, state.printed);
+  drawBase(bctx, size, state.screen === 'loading' ? null : state.map, state.mode, state.printed, answeredNames());
   state.base = base;
   render();
 }
@@ -310,8 +364,94 @@ function render(): void {
   if (state.base) ctx.drawImage(state.base, 0, 0);
   ctx.restore();
   if (state.screen === 'loading') return;
-  drawStrokes(ctx, size, state.strokes);
+  const last = state.quiz?.checked ? state.quiz.answers[state.quiz.answers.length - 1] : undefined;
+  // Darker than the forgotten grey of the reveal, so a missed answer stands out from the streets
+  // already answered.
+  if (last) drawAnswer(ctx, size, last.result, last.strokes, 1, INK.label);
+  else drawStrokes(ctx, size, state.strokes);
   drawPin(ctx, size);
+}
+
+/* ---------- One street at a time ---------- */
+
+/** Streets already asked and checked, printed on the base so the next can be placed by them. */
+function answeredNames(): string[] {
+  const q = state.quiz;
+  if (!q) return [];
+  const done = q.checked ? q.answers.slice(0, -1) : q.answers;
+  return done.map((a) => a.result.streets[0]!.name);
+}
+
+function showQuestion(): void {
+  const q = state.quiz;
+  ui.prompt.hidden = !q;
+  if (q?.checked) document.body.dataset.checked = '';
+  else delete document.body.dataset.checked;
+  if (!q) {
+    syncButtons();
+    return;
+  }
+  const n = q.answers.length + (q.checked ? 0 : 1);
+  ui.promptCount.textContent = `${n} / ${q.questions.length}`;
+  if (!q.checked) {
+    const name = q.questions[q.answers.length]!.name;
+    ui.promptText.replaceChildren(span('prompt-ask', `Draw ${name}`));
+    ui.announce.textContent = `Street ${n} of ${q.questions.length}: draw ${name}.`;
+  } else {
+    const { result } = q.answers[q.answers.length - 1]!;
+    const line = answerLine(result, result.strokePieces.length === 0);
+    ui.promptText.replaceChildren(
+      span('prompt-name', result.streets[0]!.name),
+      span('prompt-score', String(result.score)),
+      span('prompt-line', line),
+    );
+    ui.announce.textContent = `${result.streets[0]!.name}: ${result.score}. ${line}`;
+  }
+  syncButtons();
+}
+
+function span(className: string, text: string): HTMLSpanElement {
+  const el = document.createElement('span');
+  el.className = className;
+  el.textContent = text;
+  return el;
+}
+
+/**
+ * When the primary button last moved the round on. Check, Next and Skip share the button, so a
+ * double click or a double tap would otherwise answer a question nobody has seen.
+ */
+let steppedAt = -Infinity;
+const STEP_GUARD = 500;
+
+/** The primary button on the one-street-at-a-time level: check, then move on. */
+function stepQuiz(q: Quiz): void {
+  const now = performance.now();
+  if (now - steppedAt < STEP_GUARD) return;
+  steppedAt = now;
+  if (!q.checked) {
+    const street = q.questions[q.answers.length]!;
+    q.answers.push({ result: scoreStreet(street, state.strokes), strokes: state.strokes });
+    q.checked = true;
+    showQuestion();
+    render();
+    return;
+  }
+  if (q.answers.length < q.questions.length) {
+    q.checked = false;
+    state.strokes = [];
+    state.history = [];
+    setTool('pen');
+    showQuestion();
+    // The answered street joins the base.
+    resize();
+    // The button now reads Skip; a stray Enter shouldn't skip the question just asked.
+    ui.pen.focus({ preventScroll: true });
+    return;
+  }
+  const result = combine(q.answers.map((a) => a.result));
+  state.strokes = q.answers.flatMap((a) => a.strokes);
+  showResult(result);
 }
 
 new ResizeObserver(() => resize()).observe(ui.wrap);
@@ -327,7 +467,8 @@ let erasing = false;
 let pointerId: number | null = null;
 
 ui.canvas.addEventListener('pointerdown', (e) => {
-  if (state.screen !== 'draw' || e.button !== 0 || pointerId !== null) return;
+  // A checked question's answer is on the sheet; the next one starts on a fresh page.
+  if (state.screen !== 'draw' || state.quiz?.checked || e.button !== 0 || pointerId !== null) return;
   pointerId = e.pointerId;
   ui.canvas.setPointerCapture(e.pointerId);
   if (state.tool === 'pen') {
@@ -398,7 +539,7 @@ ui.toolbar.addEventListener('click', (e) => {
 
 function undo(): void {
   // Mid-gesture, the live stroke would keep growing in an array that is no longer on the sheet.
-  if (active || erasing) return;
+  if (active || erasing || state.quiz?.checked) return;
   const prev = state.history.pop();
   if (!prev) return;
   state.strokes = prev;
@@ -425,7 +566,12 @@ document.addEventListener('keydown', (e) => {
 /* ---------- Result ---------- */
 
 ui.reveal.addEventListener('click', () => {
-  if (!state.map || !state.strokes.length || active || erasing) return;
+  if (!state.map || active || erasing) return;
+  if (state.quiz) {
+    stepQuiz(state.quiz);
+    return;
+  }
+  if (!state.strokes.length) return;
   const result = scoreDrawing(
     state.map.roads,
     state.strokes,
@@ -433,6 +579,10 @@ ui.reveal.addEventListener('click', () => {
     state.map.named,
     state.map.tunnels,
   );
+  showResult(result);
+});
+
+function showResult(result: ScoreResult): void {
   // Ink the real streets outward from the pin.
   const r2 = (p: { a: Pt; b: Pt }) => (p.a.x + p.b.x) ** 2 + (p.a.y + p.b.y) ** 2;
   result.roadPieces.sort((x, y) => r2(x) - r2(y));
@@ -442,12 +592,34 @@ ui.reveal.addEventListener('click', () => {
   // The toolbar holding the focused Reveal button is gone; put focus on the result.
   ui.panel.focus({ preventScroll: true });
   animateReveal(result);
-});
+}
+
+/** The verdict line for a result: the round's own on the one-street-at-a-time level. */
+function verdictFor(r: ScoreResult): string {
+  return state.quiz ? roundVerdict(r) : verdict(r, state.strokes.length > 0);
+}
 
 function fillPanel(r: ScoreResult): void {
-  ui.verdict.textContent = verdict(r, state.strokes.length > 0);
+  ui.verdict.textContent = verdictFor(r);
   ui.recall.textContent = pct(r.recall);
   ui.precision.textContent = pct(r.precision);
+  const q = state.quiz;
+  ui.streets.hidden = !!q;
+  ui.answers.hidden = !q;
+  ui.again.textContent = q ? 'Play again' : 'Draw it again';
+  ui.precisionLabel.textContent = q ? 'Your lines on the asked streets' : 'Your lines on real streets';
+  if (q) {
+    ui.answers.replaceChildren(
+      ...q.answers.map(({ result }) => {
+        const li = document.createElement('li');
+        const skipped = result.strokePieces.length === 0;
+        li.classList.toggle('skipped', skipped);
+        li.append(span('a-name', result.streets[0]!.name), span('a-score', skipped ? 'skipped' : String(result.score)));
+        return li;
+      }),
+    );
+    return;
+  }
   const named = r.streets.filter((s) => s.length >= 60);
   const best = named.filter((s) => s.recall >= 0.6).slice(0, 4);
   const forgot = named.filter((s) => s.recall < 0.2).slice(0, 4);
@@ -495,9 +667,18 @@ function animateReveal(r: ScoreResult): void {
 ui.again.addEventListener('click', () => {
   resetDrawing();
   ui.announce.textContent = '';
+  // Another round of questions on the same map, picked afresh.
+  if (state.quiz) state.quiz = { questions: pickQuestions(questionPool()), answers: [], checked: false };
   setScreen('draw');
+  showQuestion();
   ui.pen.focus({ preventScroll: true });
 });
+
+/** Every key named street on the map, which the questions are picked from. */
+function questionPool(): NamedStreet[] {
+  if (!state.map) return [];
+  return scoreDrawing(state.map.roads, [], 'none', state.map.named, state.map.tunnels).streets;
+}
 
 ui.newPlace.addEventListener('click', goBack);
 
@@ -506,7 +687,7 @@ ui.save.addEventListener('click', async () => {
   if (!r || !state.map || !state.place) return;
   ui.save.disabled = true;
   try {
-    const blob = await makeCard(state.map, state.mode, state.strokes, r, state.place.label, verdict(r, state.strokes.length > 0));
+    const blob = await makeCard(state.map, state.mode, state.strokes, r, state.place.label, verdictFor(r));
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

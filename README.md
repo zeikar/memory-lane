@@ -2,9 +2,10 @@
 
 Draw the streets of a place you know from memory, then lay the real map over your drawing.
 
-Pick a place, and you get a 1 km square with a pin in the middle and a few landmarks marked. Draw
-the streets you remember within 500 m of it. Reveal the real map and see which streets you
-remembered, which you forgot, and which ones exist only in your head.
+Pick a place, and you get a 1 km square with a pin in the middle and a few landmarks marked. By
+default you're asked for up to five of its named streets, one at a time, each checked as you go. Or draw
+every street you remember within 500 m at once, then reveal the real map and see which streets
+you remembered, which you forgot, and which ones exist only in your head.
 
 Play it at https://zeikar.dev/memory-lane/.
 
@@ -13,7 +14,10 @@ Play it at https://zeikar.dev/memory-lane/.
 Every level marks up to 12 landmarks (stations first, then universities, museums, hilltops,
 hospitals, parks, schools and so on), plus parks, woods, rivers and railways.
 
-- **Landmarks**: just those.
+- **One street at a time**: up to five named streets, asked one by one and checked as you go. Each
+  answer stays on the sheet, named, to help with the next. Each is scored against that street
+  alone, and the round's score is the average.
+- **Landmarks**: just those; draw every street you remember.
 - **Main roads**: plus the big roads (secondary and up), which are left out of the score.
 - **Side streets**: plus every street you aren't asked for, so you draw the through roads between
   them. The printed streets are left out of the score.

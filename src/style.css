@@ -334,6 +334,95 @@ button:disabled {
 
 /* Play */
 
+.prompt {
+  width: var(--sheet);
+  min-width: 280px;
+  /* A stroke started just off the sheet would otherwise select the question. */
+  user-select: none;
+}
+
+.prompt-count {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--mat-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.prompt-text {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 14px;
+  min-height: 2.6rem;
+  line-height: 1.15;
+}
+
+.prompt-ask,
+.prompt-name {
+  font-size: clamp(1.6rem, 4.5vw, 2.1rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.prompt-score {
+  font-size: clamp(1.9rem, 5.5vw, 2.5rem);
+  font-weight: 700;
+  color: var(--red);
+  font-variant-numeric: tabular-nums;
+}
+
+.prompt-line {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--mat-soft);
+}
+
+/* The prompt takes a line above the sheet, so the sheet gives up that much height. */
+body[data-mode='quiz'][data-screen='draw'] .play {
+  --sheet: min(100%, calc(100dvh - 290px), 760px);
+}
+
+
+.answers {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+}
+
+.answers li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(233, 240, 230, 0.16);
+}
+
+.answers li:last-child {
+  border-bottom: 1px solid rgba(233, 240, 230, 0.16);
+}
+
+.a-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.a-score {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.answers .skipped {
+  color: var(--mat-soft);
+}
+
+.answers .skipped .a-score {
+  font-weight: 500;
+}
+
 .play {
   --sheet: min(100%, calc(100dvh - 210px), 760px);
   display: grid;
@@ -366,6 +455,12 @@ button:disabled {
 
 body[data-tool='eraser'] #sheet {
   cursor: cell;
+}
+
+/* A checked answer is on the sheet; nothing can be drawn until the next question. After the
+   eraser rule, which it overrides. */
+body[data-checked] #sheet {
+  cursor: default;
 }
 
 body[data-screen='result'] #sheet {
@@ -589,6 +684,10 @@ body[data-screen='result'] .play {
     --sheet: min(100%, 560px, max(240px, calc(100dvh - 190px)));
     grid-template-columns: 1fr;
     justify-items: center;
+  }
+
+  body[data-mode='quiz'][data-screen='draw'] .play {
+    --sheet: min(100%, 560px, max(240px, calc(100dvh - 260px)));
   }
 
   .sheet-wrap {

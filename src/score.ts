@@ -55,6 +55,8 @@ export interface NamedStreet {
   name: string;
   length: number;
   recall: number;
+  /** The asked-for stretches of the street, in pieces. */
+  pieces: { a: Pt; b: Pt }[];
 }
 
 export interface ScoreResult {
@@ -227,37 +229,9 @@ export function scoreDrawing(
     alleyIndex.add(ps.filter((_, k) => !asked(i, k)));
   });
 
-  // Going over the same line again draws nothing new, so a piece running alongside one already
-  // counted is skipped, for precision and for recall alike. Otherwise retracing one known street
-  // many times would outweigh any number of imaginary ones, and spare lines drawn either side of
-  // a guess would widen the tolerance for free.
-  const strokePieces: Piece[] = [];
-  const kept: Directed[] = [];
-  const counted = new PieceIndex(TOLERANCE);
-  let drawn = 0;
-  let onStreet = 0;
-  for (const stroke of ownStrokes) {
-    // A piece only becomes something to retrace once the pen has moved past it; otherwise each
-    // piece would cancel the next one along the same line.
-    const pending: { p: Directed; at: number }[] = [];
-    let along = 0;
-    for (const p of stroke) {
-      const len = dist(p.a, p.b);
-      along += len;
-      while (pending.length && along - pending[0]!.at > RETRACE + STEP) counted.add([pending.shift()!.p]);
-      const c = alleyIndex.near(p, TOLERANCE) ? 1 : keyCredit(keyIndex.nearest(p, FADE));
-      strokePieces.push({ a: p.a, b: p.b, hit: c >= SHOWN_HIT });
-      if (counted.near(p, RETRACE)) continue;
-      pending.push({ p, at: along });
-      kept.push(p);
-      drawn += len;
-      onStreet += len * c;
-    }
-    counted.add(pending.map((x) => x.p));
-  }
-
-  const strokeIndex = new PieceIndex(FADE);
-  strokeIndex.add(kept);
+  const { strokePieces, strokeIndex, drawn, onStreet } = keepStrokes(ownStrokes, (p) =>
+    alleyIndex.near(p, TOLERANCE) ? 1 : keyCredit(keyIndex.nearest(p, FADE)),
+  );
 
   const roadPieces: RoadPiece[] = [];
   let total = 0;
@@ -274,15 +248,16 @@ export function scoreDrawing(
     }),
   );
 
-  const byName = new Map<string, { length: number; hit: number }>();
+  const byName = new Map<string, { length: number; hit: number; pieces: { a: Pt; b: Pt }[] }>();
   for (const road of named) {
     if (!road.name || !keyNames.has(road.name)) continue;
-    const entry = byName.get(road.name) ?? { length: 0, hit: 0 };
+    const entry = byName.get(road.name) ?? { length: 0, hit: 0, pieces: [] };
     // Only the parts that are asked for: on the network and not alongside a printed road.
     for (const p of directed(road.pts, 0).filter((q) => targetIndex.near(q, NAME_MATCH))) {
       const len = dist(p.a, p.b);
       entry.length += len;
       entry.hit += len * keyCredit(strokeIndex.nearest(p, FADE));
+      entry.pieces.push({ a: p.a, b: p.b });
     }
     byName.set(road.name, entry);
   }
@@ -292,10 +267,83 @@ export function scoreDrawing(
   const f1 = recall + precision > 0 ? (2 * recall * precision) / (recall + precision) : 0;
   const streets = [...byName]
     .filter(([, e]) => e.length > 0)
-    .map(([name, e]) => ({ name, length: e.length, recall: e.hit / e.length }))
+    .map(([name, e]) => ({ name, length: e.length, recall: e.hit / e.length, pieces: e.pieces }))
     .sort((x, y) => y.length - x.length);
 
   return { score: Math.round(f1 * 100), recall, precision, roadPieces, strokePieces, streets, printed: printedPieces };
+}
+
+/**
+ * Goes through the drawn pieces, skipping retraces, and credits each kept one with `creditOf`.
+ * Going over the same line again draws nothing new, so a piece running alongside one already
+ * counted is skipped, for precision and for recall alike. Otherwise retracing one known street
+ * many times would outweigh any number of imaginary ones, and spare lines drawn either side of a
+ * guess would widen the tolerance for free.
+ */
+function keepStrokes(strokes: Directed[][], creditOf: (p: Directed) => number) {
+  const strokePieces: Piece[] = [];
+  const kept: Directed[] = [];
+  const counted = new PieceIndex(TOLERANCE);
+  let drawn = 0;
+  let onStreet = 0;
+  for (const stroke of strokes) {
+    // A piece only becomes something to retrace once the pen has moved past it; otherwise each
+    // piece would cancel the next one along the same line.
+    const pending: { p: Directed; at: number }[] = [];
+    let along = 0;
+    for (const p of stroke) {
+      const len = dist(p.a, p.b);
+      along += len;
+      while (pending.length && along - pending[0]!.at > RETRACE + STEP) counted.add([pending.shift()!.p]);
+      const c = creditOf(p);
+      strokePieces.push({ a: p.a, b: p.b, hit: c >= SHOWN_HIT });
+      if (counted.near(p, RETRACE)) continue;
+      pending.push({ p, at: along });
+      kept.push(p);
+      drawn += len;
+      onStreet += len * c;
+    }
+    counted.add(pending.map((x) => x.p));
+  }
+  const strokeIndex = new PieceIndex(FADE);
+  strokeIndex.add(kept);
+  return { strokePieces, strokeIndex, drawn, onStreet };
+}
+
+/**
+ * Scores a drawing of one street, for the one-street-at-a-time level: recall over that street,
+ * precision against it alone, so a line along some other real street is imaginary here. Credit
+ * fades past TOLERANCE as for any key street.
+ */
+export function scoreStreet(street: NamedStreet, strokes: Pt[][]): ScoreResult {
+  const target: Directed[] = street.pieces.map(({ a, b }) => {
+    const len = dist(a, b) || 1;
+    return { a, b, ux: (b.x - a.x) / len, uy: (b.y - a.y) / len };
+  });
+  const targetIndex = new PieceIndex(FADE);
+  targetIndex.add(target);
+  const { strokePieces, strokeIndex, drawn, onStreet } = keepStrokes(
+    strokes.map((s) => directed(s, SMOOTHING)),
+    (p) => credit(targetIndex.nearest(p, FADE)),
+  );
+  let remembered = 0;
+  const roadPieces: RoadPiece[] = target.map((p) => {
+    const c = credit(strokeIndex.nearest(p, FADE));
+    remembered += dist(p.a, p.b) * c;
+    return { a: p.a, b: p.b, hit: c >= SHOWN_HIT, key: true };
+  });
+  const recall = street.length > 0 ? remembered / street.length : 0;
+  const precision = drawn > 0 ? onStreet / drawn : 0;
+  const f1 = recall + precision > 0 ? (2 * recall * precision) / (recall + precision) : 0;
+  return {
+    score: Math.round(f1 * 100),
+    recall,
+    precision,
+    roadPieces,
+    strokePieces,
+    streets: [{ ...street, recall }],
+    printed: [],
+  };
 }
 
 /** A short piece of line with the unit direction it is matched by. */

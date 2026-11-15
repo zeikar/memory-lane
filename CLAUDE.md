@@ -27,6 +27,8 @@ rest.
 - `src/osm.ts`: map data (vector tiles to `MapData`), landmarks, place search (Nominatim).
 - `src/score.ts`: scoring and the verdict line. Read [docs/scoring.md](docs/scoring.md) before
   changing it.
+- `src/quiz.ts`: the one-street-at-a-time level: picking the questions, the answer and round
+  verdict lines, and combining the answers into one result.
 - `src/sheet.ts`: everything drawn on the canvas, for the drawing screen and the reveal. `INK`
   holds the canvas colours.
 - `src/card.ts`: the 1200×675 share image.
@@ -63,7 +65,10 @@ and why.
 
 ### Help levels
 
-`Mode` is `landmarks` | `roads` | `alleys` | `buildings`. Every level shows the landmarks, parks, woods, water
+`Mode` is `quiz` | `landmarks` | `roads` | `alleys` | `buildings`. `quiz` (One street at a time, the
+default) asks for up to five key named streets one by one (`pickQuestions`: at random from the
+eight longest that span at least 200 m, longest first; fewer than three and the round won't start), scores each with `scoreStreet` against that street alone, and prints
+each checked street on the base for the next. The others ask for every street at once. Every level shows the landmarks, parks, woods, water
 and railways.
 
 - Landmarks: up to 12, from an allowlist of POI class/subclass pairs (`LANDMARK_TIERS`), plus
@@ -114,7 +119,9 @@ README's Data section accurate.
 A green self-healing cutting mat (page background) under an engineering pad (the sheet): pale
 green grid every 100 m, graphite strokes, one tomato red for the pin, score and primary buttons.
 The reveal colours are blue (remembered), grey (forgotten; faint for non-key alleys) and orange
-highlighter (imaginary). The UI copy is English; place and street names come out in the local
+highlighter (imaginary). On the one-street-at-a-time level, earlier answers are printed in the
+hint grey with their names, and a checked answer's missed stretches use the darker label grey so
+they stand out from them. The UI copy is English; place and street names come out in the local
 language. In page copy, keep the tone plain and a little dry, like the verdict lines in `score.ts`.
 
 ## Verifying a change
