@@ -18,6 +18,8 @@ export const INK = {
   pin: '#e3342f',
   remembered: '#2350c8',
   forgotten: '#b5c0b2',
+  /** Streets the round didn't ask for, under its reveal: paler than forgotten, which they aren't. */
+  network: '#d3dbce',
   imaginary: '#f6a23c',
   hint: '#8a978a',
   label: '#5f6d5e',
@@ -414,6 +416,9 @@ export function drawResult(
   drawLandmarks(ctx, size, map);
   if (printedFor(mode) === 'major') drawHintRoads(ctx, size, map);
   drawPrintedStreets(ctx, size, result.printed);
+  // The round only scored the streets it asked for; the rest of the network goes in faintly, so
+  // the reveal reads as the whole map.
+  if (mode === 'quiz') drawNetwork(ctx, size, map);
   drawAnswer(ctx, size, result, strokes, progress);
   if (mode === 'quiz') {
     const names = result.streets.map((s) => s.name);
@@ -426,6 +431,21 @@ export function drawResult(
   }
   drawPin(ctx, size);
   drawFurniture(ctx, size);
+}
+
+/** Every street on the map, paler than the forgotten grey, the big roads a little wider. */
+function drawNetwork(ctx: CanvasRenderingContext2D, size: number, map: MapData): void {
+  const u = unit(size);
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = INK.network;
+  for (const r of map.roads) {
+    ctx.lineWidth = (r.cls === 'major' ? 2.6 : 1.6) * u;
+    path(ctx, r.pts, size);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /**

@@ -121,7 +121,8 @@ green grid every 100 m, graphite strokes, one tomato red for the pin, score and 
 The reveal colours are blue (remembered), grey (forgotten; faint for non-key alleys) and orange
 highlighter (imaginary). On the one-street-at-a-time level, earlier answers are printed in the
 hint grey with their names, and a checked answer's missed stretches use the darker label grey so
-they stand out from them. The UI copy is English; place and street names come out in the local
+they stand out from them. Its final reveal draws the rest of the network underneath in
+`INK.network`, paler than forgotten, since those streets weren't asked for. The UI copy is English; place and street names come out in the local
 language. In page copy, keep the tone plain and a little dry, like the verdict lines in `score.ts`.
 
 ## Verifying a change
