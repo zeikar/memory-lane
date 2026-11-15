@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Memory Lane</title>
+    <meta name="description" content="Draw the streets of a place you know from memory, then lay the real map over your drawing." />
+    <meta name="theme-color" content="#26463b" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body data-screen="start">
+    <header class="bar">
+      <a class="brand" href="./">Memory Lane</a>
+      <span class="place" id="place-label"></span>
+      <span class="chip" id="mode-chip"></span>
+    </header>
+
+    <main>
+      <section class="start" id="start" aria-labelledby="start-title">
+        <h1 id="start-title">How well do you know your streets?</h1>
+        <p class="lede">
+          Pick a place you know. Draw every street within 500&nbsp;m of it from memory, then lay the real map
+          over your drawing.
+        </p>
+
+        <form class="search" id="search-form" role="search">
+          <label for="q">Place</label>
+          <div class="search-row">
+            <input id="q" name="q" type="search" placeholder="A neighbourhood, station or address" autocomplete="off" required />
+            <button type="submit" class="secondary">Search</button>
+          </div>
+          <button type="button" class="link" id="locate">Use my location</button>
+        </form>
+        <ul class="results" id="results" aria-label="Search results"></ul>
+
+        <fieldset class="modes">
+          <legend>How much help</legend>
+          <label class="mode">
+            <input type="radio" name="mode" value="blank" />
+            <span class="mode-name">Blank sheet</span>
+            <span class="mode-desc">Only a pin where you are. Everything else is up to you.</span>
+          </label>
+          <label class="mode">
+            <input type="radio" name="mode" value="roads" checked />
+            <span class="mode-name">Main roads</span>
+            <span class="mode-desc">Big roads, rivers and railways are printed for you.</span>
+          </label>
+          <label class="mode">
+            <input type="radio" name="mode" value="buildings" />
+            <span class="mode-name">Buildings</span>
+            <span class="mode-desc">Main roads plus every building, so the streets show as gaps.</span>
+          </label>
+        </fieldset>
+
+        <button class="primary" id="start-btn" disabled>Pick a place first</button>
+        <p class="error" id="start-error" role="alert"></p>
+        <p class="fineprint">
+          Your search goes to OpenStreetMap's Nominatim, and the map of the area comes from OpenFreeMap. Your
+          location, if you use it, is rounded to about 100&nbsp;m. A saved image shows the streets around the pin,
+          so share it only if you're happy for people to see the area.
+        </p>
+      </section>
+
+      <section class="play" id="play" hidden>
+        <div class="sheet-wrap" id="sheet-wrap">
+          <canvas id="sheet" aria-label="Drawing sheet. Draw streets with the pointer."></canvas>
+          <p class="sheet-msg" id="sheet-msg" role="status"></p>
+        </div>
+
+        <div class="toolbar" id="toolbar" role="toolbar" aria-label="Drawing tools">
+          <button class="tool" id="pen" data-tool="pen" aria-pressed="true">Pen</button>
+          <button class="tool" data-tool="eraser" aria-pressed="false">Eraser</button>
+          <button class="tool" id="undo" disabled>Undo</button>
+          <button class="tool" id="clear" disabled>Clear</button>
+          <button class="primary" id="reveal" disabled>Reveal the real map</button>
+        </div>
+
+        <aside class="panel" id="panel" hidden tabindex="-1" aria-label="Result">
+          <p class="score"><span id="score">0</span><span class="out-of">/ 100</span></p>
+          <p class="verdict" id="verdict"></p>
+          <dl class="stats">
+            <div><dt>Streets you remembered</dt><dd id="recall"></dd></div>
+            <div><dt>Your lines on real streets</dt><dd id="precision"></dd></div>
+          </dl>
+          <div class="streets">
+            <div id="best-wrap">
+              <h2>Best remembered</h2>
+              <ul id="best"></ul>
+            </div>
+            <div id="forgot-wrap">
+              <h2>Forgotten</h2>
+              <ul id="forgot"></ul>
+            </div>
+          </div>
+          <ul class="legend" aria-label="Map legend">
+            <li><i class="sw remembered"></i>Remembered</li>
+            <li><i class="sw forgotten"></i>Forgotten</li>
+            <li><i class="sw imaginary"></i>Imaginary</li>
+          </ul>
+          <div class="actions">
+            <button class="primary" id="save">Save image</button>
+            <button class="secondary" id="again">Draw it again</button>
+            <button class="link" id="new-place">New place</button>
+          </div>
+        </aside>
+      </section>
+      <p class="visually-hidden" id="announce" role="status"></p>
+    </main>
+
+    <footer class="foot">
+      Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>,
+      tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> and
+      <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
