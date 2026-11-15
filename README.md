@@ -15,7 +15,9 @@ hospitals, parks, schools and so on), plus parks, woods, rivers and railways.
 
 - **Landmarks**: just those.
 - **Main roads**: plus the big roads (secondary and up), which are left out of the score.
-- **Buildings**: plus every building footprint, so the streets show as gaps.
+- **Side streets**: plus every street you aren't asked for, so you draw the through roads between
+  them. The printed streets are left out of the score.
+- **Buildings**: main roads plus every building footprint, so the streets show as gaps.
 
 ## Scoring
 
@@ -26,12 +28,14 @@ leaves too little, the next longest named streets are asked for too. Alleys you 
 as real streets; alleys you leave out cost nothing.
 
 Real streets and your lines are cut into short pieces. A real street piece counts as remembered when
-one of your lines runs within 18 m of it, in roughly the same direction (within 30°). Direction
-matters: a line that only crosses a street doesn't remember it. Your line's direction is read over
-about 15 m either side, so a shaky hand still counts.
+one of your lines runs within 18 m of it, in roughly the same direction (within 30°). For the key
+streets, a line further off still earns part of it, less the further it is, down to nothing at
+40 m. Direction matters: a line that only crosses a street doesn't remember it. Your line's
+direction is read over about 15 m either side, so a shaky hand still counts.
 
-- **Streets you remembered**: share of the key street length you drew.
-- **Your lines on real streets**: share of your drawn length that lies on a real street.
+- **Streets you remembered**: share of the key street length you drew (partly, for lines further
+  off).
+- **Your lines on real streets**: share of your drawn length that lies on a real street (likewise).
 - **Score**: the harmonic mean of the two, out of 100. Drawing lines everywhere drags the second
   number down, and going over the same line again counts it once.
 

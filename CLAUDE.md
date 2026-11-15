@@ -63,7 +63,7 @@ and why.
 
 ### Help levels
 
-`Mode` is `landmarks` | `roads` | `buildings`. Every level shows the landmarks, parks, woods, water
+`Mode` is `landmarks` | `roads` | `alleys` | `buildings`. Every level shows the landmarks, parks, woods, water
 and railways.
 
 - Landmarks: up to 12, from an allowlist of POI class/subclass pairs (`LANDMARK_TIERS`), plus
@@ -75,15 +75,18 @@ and railways.
   historic districts, which painted all of Prague's old town green.
 
 `roads` adds the major roads (secondary and up) as dashed hints, which are left out of the score,
-names and all. `buildings` adds building footprints. There used to be a "Blank sheet" level with only
+names and all. `alleys` (Side streets) prints every street that isn't key instead, so the player
+draws the key streets between them; only scoring knows which those are, so `main.ts` gets them
+from `scoreDrawing(..., 'alleys').printed` when the round starts. `printedFor` maps a level to what
+`scoreDrawing` treats as printed. `buildings` adds building footprints to `roads`. There used to be a "Blank sheet" level with only
 the pin; a player found it impossible, which is why landmarks are on every level.
 
 ### Scoring has been attacked, and hardened against it
 
-The matching constants in `score.ts` (`TOLERANCE`, `MIN_ALIGNMENT`, `RETRACE`, `SMOOTHING`, `STEP`)
-each close a specific exploit. docs/scoring.md lists each one with numbers. A change that looks
-like a harmless loosening (a wider tolerance, a finer printed grid, dropping the dedupe) has
-reopened one before. The key-street constants (`NAME_MATCH`, `KEY_NAME_LENGTH`, `SIDE_STREET`,
+The matching constants in `score.ts` (`TOLERANCE`, `FADE`, `MIN_ALIGNMENT`, `RETRACE`, `SMOOTHING`,
+`STEP`) each close a specific exploit or trade one off against fairness. docs/scoring.md lists each
+one with numbers. A change that looks like a harmless loosening (a wider tolerance, a longer fade,
+fading alleys too, a finer printed grid, dropping the dedupe) has reopened one before. The key-street constants (`NAME_MATCH`, `KEY_NAME_LENGTH`, `SIDE_STREET`,
 `MIN_KEY_SHARE`, `MIN_STREET_LENGTH`) are fairness tuning and fine to adjust; re-run calibrate
 after, since `MIN_KEY_SHARE` also stops one street from being the whole game.
 

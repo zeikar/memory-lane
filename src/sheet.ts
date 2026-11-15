@@ -1,8 +1,11 @@
 import { HALF, type Pt } from './geo';
 import type { MapData, Polygon } from './osm';
-import type { Piece, ScoreResult } from './score';
+import type { Piece, Printed, ScoreResult } from './score';
 
-export type Mode = 'landmarks' | 'roads' | 'buildings';
+export type Mode = 'landmarks' | 'roads' | 'alleys' | 'buildings';
+
+/** Which streets each help level prints, for scoring. */
+export const printedFor = (mode: Mode): Printed => (mode === 'landmarks' ? 'none' : mode === 'alleys' ? 'alleys' : 'major');
 
 /** Canvas colours. The legend in style.css uses the same values. */
 export const INK = {
@@ -305,15 +308,34 @@ export function drawStrokes(ctx: CanvasRenderingContext2D, size: number, strokes
   ctx.restore();
 }
 
-/** Everything under the player's pencil while drawing. Cached by the caller. */
-export function drawBase(ctx: CanvasRenderingContext2D, size: number, map: MapData | null, mode: Mode): void {
+/**
+ * Everything under the player's pencil while drawing. Cached by the caller. `printed` is the side
+ * streets the Side streets level prints (ScoreResult.printed).
+ */
+export function drawBase(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  map: MapData | null,
+  mode: Mode,
+  printed: Piece[] = [],
+): void {
   drawPaper(ctx, size);
   if (map) {
     drawContext(ctx, size, map, mode);
-    if (mode !== 'landmarks') drawHintRoads(ctx, size, map);
+    if (printedFor(mode) === 'major') drawHintRoads(ctx, size, map);
+    drawPrintedStreets(ctx, size, printed);
     drawLandmarks(ctx, size, map);
   }
   drawFurniture(ctx, size);
+}
+
+/** The side streets printed on the Side streets level: thin, solid, unnamed. */
+function drawPrintedStreets(ctx: CanvasRenderingContext2D, size: number, printed: Piece[]): void {
+  ctx.save();
+  ctx.lineCap = 'round';
+  // At least about 1 px, or they all but vanish on a phone-width sheet.
+  drawPieces(ctx, size, printed, INK.hint, Math.max(1.5 * unit(size), 1.1));
+  ctx.restore();
 }
 
 function drawPieces(ctx: CanvasRenderingContext2D, size: number, pieces: Piece[], color: string, width: number): void {
@@ -355,7 +377,8 @@ export function drawResult(
   drawPieces(ctx, size, shown.filter((p) => !p.hit && p.key), INK.forgotten, 3.8 * u);
   drawPieces(ctx, size, shown.filter((p) => p.hit && !p.key), INK.remembered, 2.4 * u);
   drawPieces(ctx, size, shown.filter((p) => p.hit && p.key), INK.remembered, 4.4 * u);
-  if (mode !== 'landmarks') drawHintRoads(ctx, size, map);
+  if (printedFor(mode) === 'major') drawHintRoads(ctx, size, map);
+  drawPrintedStreets(ctx, size, result.printed);
   ctx.globalAlpha = 0.75;
   drawPieces(ctx, size, result.strokePieces.filter((p) => !p.hit), INK.imaginary, 8 * u);
   ctx.globalAlpha = 1;

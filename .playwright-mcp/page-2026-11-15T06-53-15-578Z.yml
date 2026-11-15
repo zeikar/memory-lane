@@ -1,0 +1,46 @@
+- generic [active] [ref=f34e1]:
+  - banner [ref=f34e2]:
+    - link "Memory Lane" [ref=f34e3] [cursor=pointer]:
+      - /url: ./
+  - main [ref=f34e4]:
+    - region "How well do you know your streets?" [ref=f34e5]:
+      - heading "How well do you know your streets?" [level=1] [ref=f34e6]
+      - paragraph [ref=f34e7]: Pick a place you know. Draw the streets within 500 m of it from memory, then lay the real map over your drawing. You're scored on the streets people know by name; alleys you get right are a bonus.
+      - search [ref=f34e8]:
+        - generic [ref=f34e9]: Place
+        - generic [ref=f34e10]:
+          - searchbox "Place" [ref=f34e11]
+          - button "Search" [ref=f34e12] [cursor=pointer]
+        - button "Use my location" [ref=f34e13] [cursor=pointer]
+      - list "Search results"
+      - group "How much help" [ref=f34e14]:
+        - generic [ref=f34e16] [cursor=pointer]:
+          - radio "Landmarks Stations, landmarks, parks, woods, hills, rivers and railways are marked. The roads are up to you." [ref=f34e17]
+          - generic [ref=f34e18]: Landmarks
+          - generic [ref=f34e19]: Stations, landmarks, parks, woods, hills, rivers and railways are marked. The roads are up to you.
+        - generic [ref=f34e20] [cursor=pointer]:
+          - radio "Main roads Landmarks plus the big roads." [checked] [ref=f34e21]
+          - generic [ref=f34e22]: Main roads
+          - generic [ref=f34e23]: Landmarks plus the big roads.
+        - generic [ref=f34e24] [cursor=pointer]:
+          - radio "Side streets Landmarks plus every side street. You draw the through roads between them." [ref=f34e25]
+          - generic [ref=f34e26]: Side streets
+          - generic [ref=f34e27]: Landmarks plus every side street. You draw the through roads between them.
+        - generic [ref=f34e28] [cursor=pointer]:
+          - radio "Buildings Main roads plus every building, so the streets show as gaps." [ref=f34e29]
+          - generic [ref=f34e30]: Buildings
+          - generic [ref=f34e31]: Main roads plus every building, so the streets show as gaps.
+      - button "Pick a place first" [disabled] [ref=f34e32]
+      - alert
+      - paragraph [ref=f34e33]: Your search goes to OpenStreetMap's Nominatim, and the map of the area comes from OpenFreeMap. Your location, if you use it, is rounded to about 100 m. A saved image shows the streets around the pin, so share it only if you're happy for people to see the area.
+    - status [ref=f34e34]
+  - contentinfo [ref=f34e35]:
+    - text: Map data ©
+    - link "OpenStreetMap contributors" [ref=f34e36] [cursor=pointer]:
+      - /url: https://www.openstreetmap.org/copyright
+    - text: ", tiles by"
+    - link "OpenFreeMap" [ref=f34e37] [cursor=pointer]:
+      - /url: https://openfreemap.org
+    - text: and
+    - link "© OpenMapTiles" [ref=f34e38] [cursor=pointer]:
+      - /url: https://www.openmaptiles.org/

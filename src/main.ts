@@ -2,14 +2,15 @@ import './style.css';
 import { makeCard, pct } from './card';
 import { HALF, type Pt, dist, distToSegment, makeProjection as project } from './geo';
 import { type MapData, type Place, fetchMap, reversePlace, searchPlaces } from './osm';
-import { MIN_STREET_LENGTH, type ScoreResult, scoreDrawing, verdict } from './score';
-import { type Mode, drawBase, drawPin, drawResult, drawStrokes, toMetres } from './sheet';
+import { MIN_STREET_LENGTH, type Piece, type ScoreResult, scoreDrawing, verdict } from './score';
+import { type Mode, drawBase, drawPin, drawResult, drawStrokes, printedFor, toMetres } from './sheet';
 
 type Screen = 'start' | 'loading' | 'draw' | 'result';
 
 const MODE_CHIP: Record<Mode, string> = {
   landmarks: 'Landmarks given',
   roads: 'Main roads given',
+  alleys: 'Side streets given',
   buildings: 'Buildings given',
 };
 
@@ -62,6 +63,8 @@ const state = {
   place: null as Place | null,
   mode: 'roads' as Mode,
   map: null as MapData | null,
+  /** Side streets printed on the Side streets level. */
+  printed: [] as Piece[],
   strokes: [] as Pt[][],
   history: [] as Pt[][][],
   tool: 'pen' as 'pen' | 'eraser',
@@ -188,16 +191,19 @@ async function startRound(): Promise<void> {
     return;
   }
   const scoreable = state.map.roads
-    .filter((r) => state.mode === 'landmarks' || r.cls === 'minor')
+    .filter((r) => printedFor(state.mode) !== 'major' || r.cls === 'minor')
     .reduce((sum, r) => sum + r.pts.slice(1).reduce((s, p, i) => s + dist(r.pts[i]!, p), 0), 0);
   if (scoreable < MIN_STREET_LENGTH) {
     setScreen('start');
     ui.startError.textContent =
-      state.mode === 'landmarks'
+      printedFor(state.mode) !== 'major'
         ? 'OpenStreetMap has almost no streets mapped here. Pick a spot closer to a town centre.'
         : 'Apart from the main roads there are almost no streets mapped here. Pick another spot, or choose Landmarks.';
     return;
   }
+  // The Side streets level prints whatever isn't asked for, which only scoring knows.
+  state.printed =
+    state.mode === 'alleys' ? scoreDrawing(state.map.roads, [], 'alleys', state.map.named, state.map.tunnels).printed : [];
   ui.msg.textContent = '';
   setScreen('draw');
   // A history entry for the round, so the browser's back button (a phone's back gesture) returns
@@ -287,7 +293,7 @@ function resize(): void {
   base.height = ui.canvas.height;
   const bctx = base.getContext('2d')!;
   bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  drawBase(bctx, size, state.screen === 'loading' ? null : state.map, state.mode);
+  drawBase(bctx, size, state.screen === 'loading' ? null : state.map, state.mode, state.printed);
   state.base = base;
   render();
 }
@@ -423,7 +429,7 @@ ui.reveal.addEventListener('click', () => {
   const result = scoreDrawing(
     state.map.roads,
     state.strokes,
-    state.mode !== 'landmarks',
+    printedFor(state.mode),
     state.map.named,
     state.map.tunnels,
   );

@@ -2,11 +2,25 @@ import { type Pt, dist, distToSegment } from './geo';
 import type { Road } from './osm';
 
 /**
- * How far, in metres, a drawn line may sit from a real street and still count as that street.
+ * How far, in metres, a drawn line may sit from a real street and still count fully as that street.
  * Dense city blocks are 40–80 m across, so much more than this credits the wrong street, and a
  * uniform grid of lines starts to cover every street in a grid-plan district.
  */
 export const TOLERANCE = 18;
+/**
+ * Beyond TOLERANCE, a line still earns part of a key street, fading to nothing at this distance in
+ * metres. Placing a street from memory within 18 m is hard: drawing every key street perfectly but
+ * 25 m off scored 18, below tracing the printed sheet grid. Alleys get no fade, for recall or
+ * precision, since alleys are what a uniform grid of lines lands near; nor does anything when every
+ * street is asked for, or a grid would earn the fade on all of them.
+ */
+const FADE = 40;
+
+/** Share of a street a line this far from it earns: 1 within TOLERANCE, down to 0 at FADE. */
+const credit = (d: number) => (d <= TOLERANCE ? 1 : d >= FADE ? 0 : (FADE - d) / (FADE - TOLERANCE));
+const strict = (d: number) => (d <= TOLERANCE ? 1 : 0);
+/** A piece earning at least this share shows as remembered (or not imaginary) on the reveal. */
+const SHOWN_HIT = 0.5;
 /** Lines are cut into pieces no longer than this before matching, in metres. */
 const STEP = 8;
 /**
@@ -28,6 +42,7 @@ const SMOOTHING = 15;
 export interface Piece {
   a: Pt;
   b: Pt;
+  /** Earned at least half its credit. */
   hit: boolean;
 }
 
@@ -55,7 +70,12 @@ export interface ScoreResult {
   strokePieces: Piece[];
   /** Key named streets, longest first. */
   streets: NamedStreet[];
+  /** With `printed` 'alleys', the street pieces that were printed for the player. */
+  printed: Piece[];
 }
+
+/** What the sheet printed for the player: nothing, the major roads, or every street that isn't key. */
+export type Printed = 'none' | 'major' | 'alleys';
 
 /** Numbered side streets in Korean addressing, such as 와우산로21길 or 동교로23가길. */
 const SIDE_STREET = /\d+[가-힣]?길$/;
@@ -96,17 +116,18 @@ function nameLengths(named: Road[], onNetwork: (p: Directed) => boolean): Map<st
 const isKeyName = (name: string, length: number) => length >= KEY_NAME_LENGTH && !SIDE_STREET.test(name);
 
 /**
- * Scores a drawing against the real street network. With `hintsGiven`, the major roads were
- * printed on the sheet, so they are neither rewarded nor counted against the player. `named`
- * carries street names, which the map keeps on separate lines from the network itself.
+ * Scores a drawing against the real street network. Streets `printed` on the sheet are neither
+ * rewarded nor counted against the player. `named` carries street names, which the map keeps on
+ * separate lines from the network itself.
  */
 export function scoreDrawing(
   roads: Road[],
   strokes: Pt[][],
-  hintsGiven: boolean,
+  printed: Printed,
   named: Road[] = roads,
   tunnels: Pt[][] = [],
 ): ScoreResult {
+  const hintsGiven = printed === 'major';
   const targets = hintsGiven ? roads.filter((r) => r.cls === 'minor') : roads;
   const hints = hintsGiven ? roads.filter((r) => r.cls === 'major') : [];
   const drawnPieces = strokes.map((s) => directed(s, SMOOTHING));
@@ -119,8 +140,6 @@ export function scoreDrawing(
   // A street running alongside a printed road can't be drawn without tracing that road, so it is
   // left out of the recall total as well.
   const targetPieces = targets.map((r) => directed(r.pts, 0).filter((p) => !hintIndex.near(p, TOLERANCE)));
-  const targetIndex = new PieceIndex(TOLERANCE);
-  for (const ps of targetPieces) targetIndex.add(ps);
 
   // Recall asks only for key streets: through roads, plus long named ones. Names live on their own
   // lines in the map, so a piece is a named key street when one of those lines runs along it, and
@@ -137,8 +156,8 @@ export function scoreDrawing(
     return d <= NAME_MATCH && d <= tunnelIndex.nearest(p, NAME_MATCH);
   };
   // A printed road's name asks for nothing, not even a minor stretch that shares it.
-  const printed = new Set(hintsGiven ? named.filter((r) => r.cls === 'major').map((r) => r.name) : []);
-  const lengths = [...nameLengths(named, onNetwork)].filter(([n]) => !printed.has(n));
+  const printedNames = new Set(hintsGiven ? named.filter((r) => r.cls === 'major').map((r) => r.name) : []);
+  const lengths = [...nameLengths(named, onNetwork)].filter(([n]) => !printedNames.has(n));
   const keyNames = new Set(lengths.filter(([n, len]) => isKeyName(n, len)).map(([n]) => n));
   const isKey = targets.map((r, i) => targetPieces[i]!.map(() => !r.motorway && r.key));
   let keyLength = 0;
@@ -165,6 +184,48 @@ export function scoreDrawing(
   }
   // With next to no key street, recall would be all or nothing, so every street is asked for.
   const anyKey = keyLength >= MIN_STREET_LENGTH;
+  // Printing the side streets leaves the key streets in play, and motorways, which aren't side
+  // streets and stay unasked; printed, an expressway would hide the key road beneath it. As with
+  // printed major roads, tracing a printed street earns nothing, and a key piece running right
+  // alongside one isn't asked for. If that would leave too little to ask for, nothing is printed
+  // and the level plays like Landmarks.
+  const printedPieces: Piece[] = [];
+  if (printed === 'alleys' && anyKey) {
+    const side = (i: number, k: number) => !isKey[i]![k] && !targets[i]!.motorway;
+    const alleys = new PieceIndex(TOLERANCE);
+    targetPieces.forEach((ps, i) => alleys.add(ps.filter((_, k) => side(i, k))));
+    const keep = targetPieces.map((ps, i) =>
+      ps.map((p, k) => !side(i, k) && !(isKey[i]![k] && alleys.near(p, TOLERANCE))),
+    );
+    const left = targetPieces.reduce(
+      (sum, ps, i) => sum + ps.reduce((s, p, k) => s + (keep[i]![k] && isKey[i]![k] ? dist(p.a, p.b) : 0), 0),
+      0,
+    );
+    if (left >= MIN_STREET_LENGTH) {
+      targetPieces.forEach((ps, i) =>
+        ps.forEach((p, k) => {
+          if (side(i, k)) printedPieces.push({ a: p.a, b: p.b, hit: false });
+        }),
+      );
+      ownStrokes.forEach((ps, j) => (ownStrokes[j] = ps.filter((p) => !alleys.near(p, TOLERANCE))));
+      targetPieces.forEach((ps, i) => {
+        targetPieces[i] = ps.filter((_, k) => keep[i]![k]);
+        isKey[i] = isKey[i]!.filter((_, k) => keep[i]![k]);
+      });
+    }
+  }
+  const asked = (i: number, k: number) => !anyKey || isKey[i]![k]!;
+  // What's asked for, for the street list: a name line can also run along a piece that is in play
+  // but not asked for, such as a motorway above a key piece dropped beside a printed side street.
+  const targetIndex = new PieceIndex(TOLERANCE);
+  targetPieces.forEach((ps, i) => targetIndex.add(ps.filter((_, k) => asked(i, k))));
+  const keyCredit = anyKey ? credit : strict;
+  const keyIndex = new PieceIndex(FADE);
+  const alleyIndex = new PieceIndex(FADE);
+  targetPieces.forEach((ps, i) => {
+    keyIndex.add(ps.filter((_, k) => asked(i, k)));
+    alleyIndex.add(ps.filter((_, k) => !asked(i, k)));
+  });
 
   // Going over the same line again draws nothing new, so a piece running alongside one already
   // counted is skipped, for precision and for recall alike. Otherwise retracing one known street
@@ -184,18 +245,18 @@ export function scoreDrawing(
       const len = dist(p.a, p.b);
       along += len;
       while (pending.length && along - pending[0]!.at > RETRACE + STEP) counted.add([pending.shift()!.p]);
-      const hit = targetIndex.near(p, TOLERANCE);
-      strokePieces.push({ a: p.a, b: p.b, hit });
+      const c = alleyIndex.near(p, TOLERANCE) ? 1 : keyCredit(keyIndex.nearest(p, FADE));
+      strokePieces.push({ a: p.a, b: p.b, hit: c >= SHOWN_HIT });
       if (counted.near(p, RETRACE)) continue;
       pending.push({ p, at: along });
       kept.push(p);
       drawn += len;
-      if (hit) onStreet += len;
+      onStreet += len * c;
     }
     counted.add(pending.map((x) => x.p));
   }
 
-  const strokeIndex = new PieceIndex(TOLERANCE);
+  const strokeIndex = new PieceIndex(FADE);
   strokeIndex.add(kept);
 
   const roadPieces: RoadPiece[] = [];
@@ -203,13 +264,13 @@ export function scoreDrawing(
   let remembered = 0;
   targetPieces.forEach((ps, i) =>
     ps.forEach((p, k) => {
-      const key = !anyKey || isKey[i]![k]!;
-      const hit = strokeIndex.near(p, TOLERANCE);
-      roadPieces.push({ a: p.a, b: p.b, hit, key });
+      const key = asked(i, k);
+      const c = (key ? keyCredit : strict)(strokeIndex.nearest(p, FADE));
+      roadPieces.push({ a: p.a, b: p.b, hit: c >= SHOWN_HIT, key });
       if (!key) return;
       const len = dist(p.a, p.b);
       total += len;
-      if (hit) remembered += len;
+      remembered += len * c;
     }),
   );
 
@@ -221,7 +282,7 @@ export function scoreDrawing(
     for (const p of directed(road.pts, 0).filter((q) => targetIndex.near(q, NAME_MATCH))) {
       const len = dist(p.a, p.b);
       entry.length += len;
-      if (strokeIndex.near(p, TOLERANCE)) entry.hit += len;
+      entry.hit += len * keyCredit(strokeIndex.nearest(p, FADE));
     }
     byName.set(road.name, entry);
   }
@@ -234,7 +295,7 @@ export function scoreDrawing(
     .map(([name, e]) => ({ name, length: e.length, recall: e.hit / e.length }))
     .sort((x, y) => y.length - x.length);
 
-  return { score: Math.round(f1 * 100), recall, precision, roadPieces, strokePieces, streets };
+  return { score: Math.round(f1 * 100), recall, precision, roadPieces, strokePieces, streets, printed: printedPieces };
 }
 
 /** A short piece of line with the unit direction it is matched by. */

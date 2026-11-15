@@ -12,6 +12,7 @@ const MAT_SOFT = '#a9c2b2';
 const MODE_NAME: Record<Mode, string> = {
   landmarks: 'Landmarks given',
   roads: 'Main roads given',
+  alleys: 'Side streets given',
   buildings: 'Buildings given',
 };
 

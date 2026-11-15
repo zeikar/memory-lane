@@ -14,15 +14,22 @@ so check this list before loosening one. After any change to `src/score.ts`, or 
 3. **Hint roads out first.** On the Main roads and Buildings levels, the major roads are printed.
    Any drawn piece aligned within 18 m of one is dropped before anything else. A real street piece
    in the same position is dropped from the recall total, since it can't be drawn without
-   tracing the printed road.
+   tracing the printed road. On the Side streets level the same happens with every street that
+   isn't key (worked out first, as on the Landmarks level), except motorways and ramps: printed,
+   an expressway hid the key road beneath it, 22% of Shibuya's key length. That leaves the key
+   streets in play, plus the motorways, unasked. If it would leave under 600 m of key street,
+   nothing is printed and the level plays like Landmarks.
 4. **Retrace dedupe.** A drawn piece aligned within 12 m (`RETRACE`) of a piece already counted
    is skipped, for precision and for recall. The current stroke's own pieces join the counted
    set once the pen has moved `RETRACE + STEP` (20 m) past them, so neighbouring pieces of one
    line don't cancel each other.
-5. **Matching.** Two pieces match when they are within 18 m (`TOLERANCE`) and within 30° of each
-   other (`MIN_ALIGNMENT`).
-6. **Recall** is the share of key street length with a kept drawn piece matching it. **Precision**
-   is the share of kept drawn length matching any real street, key or not.
+5. **Matching.** Two pieces match when they are within 30° of each other (`MIN_ALIGNMENT`) and
+   close. Within 18 m (`TOLERANCE`) a match earns full credit. For key streets, credit then fades
+   linearly to nothing at 40 m (`FADE`); for alleys it stops at 18 m. A piece earning at least half
+   shows as remembered (or as a real street, for a drawn piece) on the reveal.
+6. **Recall** is the key street length, weighted by the credit of the nearest kept drawn piece, as
+   a share of all key street length. **Precision** is the kept drawn length, weighted by its credit
+   against the nearest real street, key or not, as a share of all kept drawn length.
 7. **Score** is the harmonic mean of the two, × 100, rounded.
 
 ## Key streets
@@ -74,22 +81,38 @@ street is asked for. The start screen turns a place down below the same length o
 Grid-plan districts are mostly key, and that's accepted: Midtown Manhattan is 92% key, because
 every block-long cross street passes 300 m. A grid is also the easiest layout to remember.
 
+## Partial credit past 18 m
+
+Placing a street from memory within 18 m is hard: 18 m is under 7 px on a phone-width sheet. With
+an all-or-nothing 18 m, drawing every key street with the right shape but 25 m off scored 18 on
+average, below tracing the printed 100 m grid (30). The fade to 40 m makes that 72–95.
+
+It is limited to key streets because alleys are what a uniform grid of lines lands near: a fade
+on every street raised the 100 m grid to 49 on average, against 41 with the fade on key streets
+only. When every street is asked for (the 600 m fallback), nothing fades. Giving each drawn piece
+fade credit only for the one street it is nearest to was tried, and changed the grid by about one
+point, so it isn't there.
+
+The price is a higher floor for drawing lines everywhere (see below), traded for a game a player
+can score on.
+
 ## Attacks and the rule that closes each
 
 | Attack | Before the fix | Rule |
 |---|---|---|
 | One straight line through a dense grid of alleys earns a little from every alley it crosses | crossings credited ~50 m each | 30° direction match |
 | Shaky hand: tremor makes segments point anywhere, so honest lines missed | precision 0.75 on a careful trace | 15 m direction smoothing (simplifying the line first didn't work: it kept the zigzag) |
-| Trace the printed sheet grid | 54–74 with a 50 m grid and 25 m tolerance | grid printed every 100 m, tolerance 18 m: now 18–32 (41 in Koenji) |
+| Trace the printed sheet grid | 54–74 with a 50 m grid and 25 m tolerance | grid printed every 100 m, tolerance 18 m, fade on key streets only: now 1–50 (52 in Koenji) |
 | Retrace one known street many times | 54 → 83 | retrace dedupe |
 | Dedupe by grid cell instead of geometry | precision swung 0.24–0.76 with pointer sampling density | geometric dedupe on real length |
 | Hedge: draw a guess plus spare lines ±11 m either side | 69 → 81 | recall only from kept (deduped) pieces |
 | Zigzag shading along a street | precision 0.73 instead of 0.50 | retrace delay cut from 36 m to `RETRACE + STEP` |
 | Trace the printed main roads, crediting a parallel side street too | small leak | hint pieces dropped before indexing |
 
-Known and accepted: hand-drawing your own 50 m grid still scores 24–61 (Seogyo-dong 24, Le Marais
-39, Shibuya 43, Midtown 43, Koenji 61; Yeouido 4). Drawing lines everywhere does cost precision,
-but a uniform grid over a dense, grid-like district genuinely lies on many streets.
+Known and accepted: hand-drawing your own 50 m grid scores 30–71 (Seogyo-dong 30, Le Marais 52,
+Shibuya 52, Midtown 63, Koenji 71; Yeouido 3), up from 24–61 before the fade. Drawing lines
+everywhere does cost precision, but a uniform grid over a dense, grid-like district genuinely lies
+near many streets.
 
 ## Calibration
 
@@ -102,14 +125,17 @@ numbered side streets, and Jamsil for one street dominating a sparse square) and
   of each dual carriageway, which credits the other side too);
 - drawing only the key streets scores 95 or more;
 - no motorway or ramp piece is key, and no listed street runs mostly in a tunnel;
-- drawing any one of the ten longest asked-for streets scores 70 or less, with and without the
-  main roads printed;
-- drawing only the streets that aren't key gives recall 0.35 or less and precision 0.95 or more.
-  Not 0, because a side lane 9–26 m beside a key street credits it, as any line that close would
-  (13% of key length in Seogyo-dong), and so does an expressway built over one (Shibuya's Shuto
-  line over Route 246: 0.25). If every street became key, this fails;
-- tracing the 100 m sheet grid scores 40 or less;
-- tracing the printed main roads scores 10 or less.
+- drawing any one of the ten longest asked-for streets scores 70 or less, with nothing, the main
+  roads or the side streets printed;
+- drawing only the streets that aren't key gives recall 0.45 or less and precision 0.95 or more.
+  Not 0, because a side lane or alley beside a key street earns part of it, as any line that close
+  would, and so does an expressway built over one (Shibuya's Shuto line over Route 246; Shibuya is
+  the highest, at 0.34). If every street became key, this fails;
+- every key street drawn 25 m to one side scores 60 or more, with nothing, the main roads or the
+  side streets printed (72–95 now);
+- tracing the 100 m sheet grid scores 55 or less (40 before the fade; Midtown is 50);
+- tracing the printed main roads, or the printed side streets, scores 10 or less;
+- printing the side streets drops at most 15% of key length (Shibuya is the highest, at 12%).
 
 It needs the network, so it isn't in `npm test` or CI. Unit tests in `src/score.test.ts` pin each
 rule above with synthetic streets.
