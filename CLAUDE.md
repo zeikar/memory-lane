@@ -98,6 +98,9 @@ README's Data section accurate.
 
 - One pointer draws at a time (`pointerId` in main.ts); a second finger or a palm is ignored.
 - Undo, Clear and Reveal are ignored mid-stroke.
+- A round has its own history entry, so the browser's Back (a phone's back gesture) and the
+  header's Change both return to the start screen, with the place and help level still picked.
+  Leaving a drawing that hasn't been revealed asks first.
 - The count-up score isn't a live region. The final result is announced once through `#announce`,
   and focus moves with `preventScroll: true`, or phones scroll the sheet away during the reveal.
 - `prefers-reduced-motion` skips the reveal animation.

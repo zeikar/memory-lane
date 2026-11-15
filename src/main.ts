@@ -22,6 +22,7 @@ const $ = <T extends HTMLElement>(id: string) => {
 const ui = {
   placeLabel: $('place-label'),
   modeChip: $('mode-chip'),
+  change: $<HTMLButtonElement>('change'),
   start: $('start'),
   searchForm: $<HTMLFormElement>('search-form'),
   q: $<HTMLInputElement>('q'),
@@ -80,6 +81,7 @@ function setScreen(screen: Screen): void {
   ui.panel.hidden = screen !== 'result';
   ui.placeLabel.textContent = screen === 'start' ? '' : (state.place?.label ?? '');
   ui.modeChip.textContent = screen === 'start' ? '' : MODE_CHIP[state.mode];
+  ui.change.hidden = screen !== 'draw' && screen !== 'result';
   if (screen !== 'start') resize();
 }
 
@@ -198,8 +200,49 @@ async function startRound(): Promise<void> {
   }
   ui.msg.textContent = '';
   setScreen('draw');
+  // A history entry for the round, so the browser's back button (a phone's back gesture) returns
+  // to the start screen instead of leaving the game. Reused if Forward or a reload left one here.
+  if (inRoundEntry()) history.replaceState({ round: true }, '');
+  else history.pushState({ round: true }, '');
   ui.pen.focus({ preventScroll: true });
 }
+
+const inRoundEntry = () => !!(history.state as { round?: boolean } | null)?.round;
+
+/** Back to the start screen, with the place and help level still picked. False if the player stays. */
+function leaveRound(): boolean {
+  // Like Undo, Clear and Reveal, nothing happens mid-stroke.
+  if (active || erasing) return false;
+  // Undo can bring back a cleared drawing, so a cleared one still counts.
+  const unsaved = state.screen === 'draw' && (state.strokes.length > 0 || state.history.length > 0);
+  if (unsaved && !confirm('Leave this drawing? It will be lost.')) return false;
+  resetDrawing();
+  ui.announce.textContent = '';
+  setScreen('start');
+  // Not the search box: on a phone that would pop the keyboard up after a back gesture.
+  ui.startBtn.focus({ preventScroll: true });
+  return true;
+}
+
+/** Set between history.back() and its popstate, so a double click doesn't go back twice. */
+let backPending = false;
+
+/** Leaves through the round's history entry when there is one, so Back doesn't go round again. */
+function goBack(): void {
+  if (backPending) return;
+  if (inRoundEntry()) {
+    backPending = true;
+    history.back();
+  } else leaveRound();
+}
+
+window.addEventListener('popstate', () => {
+  backPending = false;
+  if (state.screen !== 'draw' && state.screen !== 'result') return;
+  if (!leaveRound()) history.pushState({ round: true }, '');
+});
+
+ui.change.addEventListener('click', goBack);
 
 /* ---------- Drawing ---------- */
 
@@ -450,11 +493,7 @@ ui.again.addEventListener('click', () => {
   ui.pen.focus({ preventScroll: true });
 });
 
-ui.newPlace.addEventListener('click', () => {
-  resetDrawing();
-  setScreen('start');
-  ui.q.focus();
-});
+ui.newPlace.addEventListener('click', goBack);
 
 ui.save.addEventListener('click', async () => {
   const r = state.result;
